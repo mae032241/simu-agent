@@ -1,6 +1,8 @@
 """Public-view and inert artifact handoff boundaries; no training or unpickling."""
 import hashlib
 import json
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import pytest
 
@@ -66,3 +68,50 @@ def test_nonregular_model_rejected_before_either_handoff_file(tmp_path, monkeypa
     (root / 'output/submitted_model.pkl').symlink_to(root / 'host-private/canary.txt')
     with pytest.raises(OSError): local.handoff(root)
     assert not list((root / 'submission').iterdir())
+
+
+@pytest.mark.parametrize('virtual_environment', [False, True])
+def test_smoke_reuses_selected_existing_python_without_creating_environment(tmp_path, monkeypatch, virtual_environment):
+    from scripts import run_tests as guard
+
+    root, _ = prepared(tmp_path, monkeypatch)
+    base = tmp_path / 'shared-python'
+    (base / 'bin').mkdir(parents=True); (base / 'lib').mkdir()
+    base_python = base / 'bin/python3'; base_python.write_text('existing interpreter')
+    prefix, python = base, base_python
+    if virtual_environment:
+        prefix = tmp_path / 'shared-venv'
+        (prefix / 'bin').mkdir(parents=True); (prefix / 'lib').mkdir()
+        python = prefix / 'bin/python3'; python.symlink_to(base_python)
+        (prefix / 'pyvenv.cfg').write_text('include-system-site-packages = true\n')
+    original_files = {path:path.read_bytes() for directory in (base, prefix)
+        for path in directory.rglob('*') if path.is_file()}
+
+    def runtime_probe(command, **kwargs):
+        assert command[:3] == [str(python), '-I', '-c']
+        assert kwargs == {'text':True}
+        return json.dumps([str(prefix), str(base)])
+
+    commands = []
+
+    def run_one(command, environment, limits, output, lock_fd):
+        commands.append(command)
+        return {'returncode':0, 'stop_reason':'exited'}
+
+    monkeypatch.setattr(local.subprocess, 'check_output', runtime_probe)
+    monkeypatch.setattr(guard, 'serial_lock', lambda:nullcontext(SimpleNamespace(fileno=lambda:7)))
+    monkeypatch.setattr(guard, 'run_one', run_one)
+    monkeypatch.setattr(local, 'handoff', lambda path:{})
+    local.smoke(root, python)
+
+    command, = commands
+    for directory in {base, prefix}:
+        assert any(command[index:index+3] == ['--ro-bind', str(directory / 'lib'), str(directory / 'lib')]
+            for index in range(len(command)))
+    assert (str(prefix / 'pyvenv.cfg') in command) is virtual_environment
+    start = command.index('_task') - 1
+    assert command[start:start+6] == ['/runtime/covshift_preflight.py', '_task',
+        str(root / 'host-private/canary.txt'), local.os.readlink('/proc/self/ns/net'), str(python), str(prefix)]
+    assert {path:path.read_bytes() for directory in (base, prefix)
+        for path in directory.rglob('*') if path.is_file()} == original_files
+    assert not (root / 'venv').exists()

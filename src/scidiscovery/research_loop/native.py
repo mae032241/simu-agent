@@ -243,8 +243,9 @@ def run_native(root: Path, step: int, attempt=0):
     prompt = (role_instruction + '\nRead science-task.json, then the global files and direct '
               'parent conclusions it names. Read particular parent artifacts only as scientifically needed. '
               'Use work/ for scratch code, logs, diagnostics and intermediate models; artifacts/ contains only '
-              'necessary deliverables for the next role. Experiments may use experiments/<name>/{work,artifacts} '
-              'and an optional brief scientific conclusion.md. Those are directories, not extra role agents. '
+              'necessary deliverables for the next role. Experiments may use experiments/<name>/work for native '
+              'authoring scratch and experiments/<name>/artifacts for managed outputs, with an optional brief '
+              'scientific conclusion.md. Those are directories, not extra role agents. '
               + completion + links_instruction + verification
               + 'The controller collects deliverables, records paths and hashes, validates and seals your final response. '
               'Do not build attachment indexes, manifests, provenance inventories, hash lists, packaging scripts, '
@@ -294,7 +295,9 @@ def run_native(root: Path, step: int, attempt=0):
         prompt += ('\nManaged local experiments: run '+json.dumps([*managed_command,
             'run','--experiment-dir','experiments/<name>','--script','experiments/<name>/run.py','--','<script args>'])
             +'. Use real paths/arguments. Only the chosen directory is snapshotted, excluding its artifacts/. '
-            'The copied script runs with that snapshot as cwd and writes artifacts/; original directories are unchanged. '
+            'The copied script runs with that read-only snapshot as cwd and writes the writable artifacts/. '
+            'The default native backend also exposes the task public_root read-only at its declared absolute path; '
+            'that live public tree is outside the input snapshot and does not prove all dynamic reads were frozen. '
             'Control retains exit/time/logs/inputs/outputs. Optional artifacts/result.json is version 1 JSON with metrics '
             '(name,value; optional unit,evaluation_key,direction) and outputs (path relative to the experiment root, label). '
             'unit, evaluation_key and direction retain your scientific explanation; control does not classify or infer their meaning. Read describe for the complete optional result contract and field diagnostics. '

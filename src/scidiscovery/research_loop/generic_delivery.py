@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import runpy
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -18,9 +19,25 @@ def descriptor(directory, *, python=sys.executable):
     directory = Path(directory).absolute()
     if directory.resolve() != directory or not directory.is_dir():
         raise ValueError('Delivery requires an explicit original target directory')
+    python = str(Path(python).absolute())
+    if python == str(Path(sys.executable).absolute()):
+        roots = [sys.base_prefix, sys.prefix]
+    else:
+        # A copied venv executable does not identify its base standard library.
+        # Ask this exact interpreter during preparation, before freezing config.
+        result = subprocess.run([python, '-I', '-c',
+            'import json,sys;print(json.dumps([sys.base_prefix,sys.prefix]))'],
+            check=True, capture_output=True, text=True, timeout=5)
+        roots = json.loads(result.stdout)
+    if (not isinstance(roots, list) or not roots or any(not isinstance(path, str)
+            or not Path(path).is_absolute() or not Path(path).is_dir()
+            or Path(path).resolve() in {Path('/'), Path.home().resolve()}
+            or directory.is_relative_to(Path(path).resolve()) for path in roots)):
+        raise ValueError('Delivery requires explicit Python runtime roots')
     module = str(Path(__file__).resolve())
     return dict(adapter=module, launcher_argv=[python, module, '--isolate'],
-        config=dict(python=python), target=dict(directory=str(directory)), capabilities=[],
+        config=dict(python=python, runtime_roots=list(dict.fromkeys(roots))),
+        target=dict(directory=str(directory)), capabilities=[],
         effect_scope='Copy and confirm already retained declared files in a local directory only. '
                      'Does not train, run task-native submission or perform a scientific audit.',
         inputs=[dict(label='runtime-python', path=python)], source_roots=[str(directory)])
@@ -105,7 +122,7 @@ def isolate(request, adapter):
     stage = Path(request['stage'])
     if stage.resolve() != stage or not stage.is_dir() or request['phase'] not in {'promote', 'confirm'}:
         raise ValueError('Exact isolated directory delivery stage required')
-    if set(request['target']) != {'directory'} or set(request['config']) != {'python'}:
+    if set(request['target']) != {'directory'} or set(request['config']) != {'python', 'runtime_roots'}:
         raise ValueError('Explicit directory target and runtime required')
     target = Path(request['target']['directory'])
     if target.resolve() != target or not target.is_dir():raise ValueError('Delivery target changed')
@@ -118,10 +135,19 @@ def isolate(request, adapter):
     if bwrap is None:raise ValueError('Directory delivery requires the qualified namespace launcher')
     args = [bwrap, '--unshare-user', '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts',
         '--die-with-parent', '--new-session', '--clearenv', '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp']
-    base = python.resolve().parent.parent
-    for path in dict.fromkeys(['/usr', '/bin', '/lib', '/lib64', str(python.parent.parent),
-            str(base / 'bin'), str(base / 'lib')]):
+    roots = request['config']['runtime_roots']
+    if not isinstance(roots, list) or not roots:
+        raise ValueError('Delivery requires explicit Python runtime roots')
+    for path in roots:
+        if (not isinstance(path, str) or not Path(path).is_absolute() or not Path(path).is_dir()
+                or Path(path).resolve() in {Path('/'), Path.home().resolve()}
+                or stage.is_relative_to(Path(path).resolve()) or target.is_relative_to(Path(path).resolve())):
+            raise ValueError('Python runtime overlaps private delivery paths')
+    for path in dict.fromkeys(['/usr', '/bin', '/lib', '/lib64', *roots]):
         if Path(path).exists():args += ['--ro-bind', path, path]
+    for path in dict.fromkeys([str(python), str(python.resolve())]):
+        if not any(Path(path).is_relative_to(root) for root in ['/usr', '/bin', '/lib', '/lib64', *roots]):
+            args += ['--ro-bind', path, path]
     args += ['--ro-bind', str(stage / 'inputs'), '/inputs', '--ro-bind', adapter, '/delivery.py',
         '--bind' if request['phase'] == 'promote' else '--ro-bind', str(target), '/target',
         '--setenv', 'PATH', os.defpath, '--chdir', '/tmp', '--', str(python), '-I', '/delivery.py', '--leaf']

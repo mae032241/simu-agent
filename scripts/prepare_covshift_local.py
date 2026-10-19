@@ -106,12 +106,10 @@ def verify_public(root, manifest):
         raise ValueError('private_meta_not_removed')
 
 
-def task_smoke(private, host_netns, expected_prefix):
+def task_smoke(private, host_netns, expected_python, expected_prefix):
     from importlib.metadata import version
     import numpy, pandas, sklearn, scipy, cloudpickle
-    assert sys.prefix == expected_prefix and sys.executable == expected_prefix + '/bin/python'
-    assert all(Path(m.__file__).resolve().is_relative_to(Path(expected_prefix))
-        for m in (numpy, pandas, sklearn, scipy, cloudpickle))
+    assert sys.prefix == expected_prefix and sys.executable == expected_python
     assert not Path(private).exists() and 'COVSHIFT_SYNTHETIC_SECRET' not in os.environ
     assert os.readlink('/proc/self/ns/net') != host_netns
     meta = json.loads(Path('/app/harness/meta.json').read_text())
@@ -135,7 +133,8 @@ def task_smoke(private, host_netns, expected_prefix):
     versions = {n:version(n) for n in ('numpy','scipy','pandas','scikit-learn','cloudpickle',
         'joblib','threadpoolctl','python-dateutil','pytz','tzdata','six')}
     result = dict(kind='custom_engineering_smoke_not_scientific_score', sys_executable=sys.executable,
-        sys_prefix=sys.prefix, versions=versions, successful_experiments=1, required_25_not_completed=True,
+        sys_prefix=sys.prefix, sys_base_prefix=sys.base_prefix, versions=versions,
+        successful_experiments=1, required_25_not_completed=True,
         public_audit_completed=True, leakage_flag=False, native_child_boundary=child.stdout.strip(),
         task_network_namespace='separate', host_private_not_mounted=True, host_environment_cleared=True,
         launch_ready=False, hidden_scoring='not_run')
@@ -163,23 +162,28 @@ def smoke(root, python):
     root, python = Path(root).resolve(), Path(python).absolute()
     manifest = json.loads((root / 'prepared.json').read_text())
     verify_public(root, manifest)
-    prefix = python.parent.parent
-    if not (prefix / 'pyvenv.cfg').is_file():
-        raise ValueError('independent_venv_required')
+    # Keep the selected interpreter spelling: resolving a venv's executable
+    # symlink would silently select its base environment instead.
+    runtime = json.loads(subprocess.check_output([str(python), '-I', '-c',
+        'import json,sys; print(json.dumps([sys.prefix,sys.base_prefix]))'], text=True))
+    prefix, base_prefix = map(Path, runtime)
     limits = json.loads(guard.DEFAULT_CONFIG.read_text())['limits']
     env = dict(os.environ, COVSHIFT_SYNTHETIC_SECRET='not-a-credential')
     env.pop('PYTHONPATH', None)
     with guard.serial_lock() as lock:
         output = root / 'smoke'; output.mkdir()
         payload = [str(python), '-I', '/runtime/covshift_preflight.py', '_task',
-            str(root / 'host-private/canary.txt'), os.readlink('/proc/self/ns/net'), str(prefix)]
+            str(root / 'host-private/canary.txt'), os.readlink('/proc/self/ns/net'), str(python), str(prefix)]
         entry = [str(python), '-I', '-c',
             'import os,sys; os.close(int(sys.argv[1])); os.execv(sys.executable,sys.argv[2:])', str(lock.fileno()), *payload]
         command = helpers().namespace_command(root, python, []) + [
             '--ro-bind', str(python.resolve()), str(python),
-            '--ro-bind', str(prefix / 'lib'), str(prefix / 'lib'),
-            '--ro-bind', str(prefix / 'pyvenv.cfg'), str(prefix / 'pyvenv.cfg'),
             '--ro-bind', str(Path(__file__).resolve()), '/runtime/covshift_preflight.py']
+        runtime_paths = [prefix / 'lib', base_prefix / 'lib']
+        if (prefix / 'pyvenv.cfg').is_file():
+            runtime_paths.append(prefix / 'pyvenv.cfg')
+        for path in dict.fromkeys(runtime_paths):
+            command += ['--ro-bind', str(path), str(path)]
         for key, value in dict(EXP_HARNESS='/app/harness', EXP_RUN_DIR='/app/output',
                 EXP_TRAIN='/app/harness/train.csv', EXP_VAL='/app/harness/val.csv', EXP_META='/app/harness/meta.json',
                 EXP_RUNNER='/app/harness/runner.py', EXP_DEFAULT_SCRIPT='/app/workspace/train.py',
@@ -201,11 +205,11 @@ def main():
     sub = parser.add_subparsers(dest='action', required=True)
     prep = sub.add_parser('prepare'); prep.add_argument('--output', type=Path, required=True); prep.add_argument('--task-root', type=Path, required=True)
     check = sub.add_parser('smoke'); check.add_argument('--prepared', type=Path, required=True); check.add_argument('--python', required=True)
-    task = sub.add_parser('_task'); task.add_argument('private'); task.add_argument('host_netns'); task.add_argument('prefix')
+    task = sub.add_parser('_task'); task.add_argument('private'); task.add_argument('host_netns'); task.add_argument('python'); task.add_argument('prefix')
     args = parser.parse_args()
     if args.action == 'prepare': print(json.dumps(prepare(args.output, args.task_root)))
     elif args.action == 'smoke': smoke(args.prepared, args.python)
-    else: task_smoke(args.private, args.host_netns, args.prefix)
+    else: task_smoke(args.private, args.host_netns, args.python, args.prefix)
 
 
 if __name__ == '__main__': main()

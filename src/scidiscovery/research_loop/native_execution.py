@@ -130,6 +130,17 @@ def _native_program(launcher):
     raise UnsupportedExecution('The selected native installation has no supported scientific sandbox binary')
 
 
+def _public_root(public, root, work, home, runtime_roots):
+    from .experiments import UnsupportedExecution
+    if not public.is_absolute() or public.resolve()!=public or not public.is_dir():
+        raise UnsupportedExecution('Declared public root is no longer an original directory')
+    protected=[root,work,home,Path('/etc/codex'),Path('/task-native'),Path('/task-tmp'),
+        Path('/proc'),Path('/dev'),*runtime_roots]
+    if (Path('/tmp').is_relative_to(public) or any(public.is_relative_to(path.resolve())
+            or path.resolve().is_relative_to(public) for path in protected)):
+        raise UnsupportedExecution('Declared public root overlaps private control or a scientific namespace mount')
+
+
 def prepare(root, step, record, work, home, args, *, standard, resume_position=None):
     """Freeze one host-only attempt; unsupported launchers still support reads."""
     from . import contracts as c, execution, experiments as e
@@ -138,6 +149,7 @@ def prepare(root, step, record, work, home, args, *, standard, resume_position=N
         native_attempt=dict(number=len(execution.records(root,step))-1,execution_key=execution.identity(root,step)),
         intent=e.proof(record/'native-intent.json'),implementation=e.proof(Path(__file__).resolve()),
         native_argv=list(args),home=str(home),workspace=str(work))
+    public=Path(c.read(c.regular(root/'jobs'/f'{step:03d}.json'))['public_root'])
     native_args=list(args)
     try:
         if not standard:
@@ -148,6 +160,9 @@ def prepare(root, step, record, work, home, args, *, standard, resume_position=N
         if bwrap is None:raise e.UnsupportedExecution('The native scientific namespace wrapper is unavailable')
         value.update(policy=policy,permission_sources=originals,native=e.proof(helper),bwrap=e.proof(Path(bwrap).resolve()),
             python=str(Path(sys.executable).absolute()),runtime_roots=list(dict.fromkeys((sys.base_prefix,sys.prefix))))
+        _public_root(public,root,work,home,[Path(path) for path in
+            ('/usr','/bin','/lib','/lib64','/etc/resolv.conf','/etc/hosts','/etc/ssl/certs',
+             *value['runtime_roots'],value['native']['path'],value['python'])])
         backend=record/'scientific-native-home';backend.mkdir(mode=0o700)
         tmpdir=os.environ.get('TMPDIR')
         projection=_profile(policy,work,tmpdir)
@@ -181,6 +196,7 @@ def prepare(root, step, record, work, home, args, *, standard, resume_position=N
         if e.proof(snapshot)!=original or c.read(c.regular(snapshot))!=value:
             raise e.IntegrityError('Original native permissions changed')
         if (e.proof(record/'native-intent.json')!=value['intent']
+                or c.digest(root/'jobs'/f'{step:03d}.json')!=value['task_sha256']
                 or e.proof(Path(__file__).resolve())!=value['implementation']
                 or accepted.get('native_attempt')!=value['native_attempt']
                 or accepted.get('scope')!=config['scope']
@@ -190,11 +206,11 @@ def prepare(root, step, record, work, home, args, *, standard, resume_position=N
         for key in ('native','bwrap','backend_configuration'):
             if e.proof(value[key]['path'])!=value[key]:
                 raise e.IntegrityError('Original native sandbox implementation changed')
-        return _launch(value,config,accepted,command,cwd)
+        return _launch(value,config,accepted,command,cwd,public=public,root=root)
     return native_args,launch
 
 
-def _launch(value,config,accepted,command,cwd):
+def _launch(value,config,accepted,command,cwd,*,public,root):
     from . import experiments as e
     if config['execution_interface']['executor']!='local_execution:command':
         raise e.UnsupportedExecution('Selected executor has no default scientific subprocess namespace')
@@ -236,6 +252,10 @@ def _launch(value,config,accepted,command,cwd):
     for path in dict.fromkeys((value['native']['path'],str(Path(command[0]).absolute()))):
         if not any(Path(path).is_relative_to(base) for base in runtime_roots):
             wrapped.extend(['--ro-bind',path,path])
+    _public_root(public,root,work,Path(value['home']),[*runtime_roots,
+        *[Path(path) for path in ('/etc/resolv.conf','/etc/hosts','/etc/ssl/certs',
+            value['native']['path'],str(Path(command[0]).absolute()))]])
+    wrapped.extend(['--ro-bind',str(public),str(public)])
     wrapped.extend(['--bind',str(work),str(work),
         '--ro-bind',value['backend_configuration']['path'],str(backend/'config.toml'),
         '--tmpfs',str(work/'work/experiment'),'--tmpfs','/task-tmp','--chdir',cwd])

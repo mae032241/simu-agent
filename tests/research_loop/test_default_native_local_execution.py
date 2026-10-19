@@ -24,6 +24,15 @@ here=pathlib.Path.cwd()
 probe=json.loads((here/'probe.json').read_text()) if (here/'probe.json').exists() else json.loads((here/'work/probe.json').read_text())
 assert not pathlib.Path(probe['private']).exists()
 assert not pathlib.Path(probe['sibling']).exists()
+public=pathlib.Path(probe['public'])
+assert public.read_text()=='declared public input'
+try:public.write_text('must stay read-only')
+except OSError:pass
+else:raise AssertionError('Declared public input was writable')
+assert public.read_text()=='declared public input'
+try:(public.parent/'private-link').read_text()
+except OSError:pass
+else:raise AssertionError('Public symlink exposed a private sibling')
 assert not (pathlib.Path(os.environ['CODEX_HOME'])/'auth.json').exists()
 configuration=(pathlib.Path(os.environ['CODEX_HOME'])/'config.toml').read_text()
 assert 'model_provider' not in configuration and 'model=' not in configuration
@@ -48,6 +57,7 @@ if probe.get('exclude_tmpdir'):
  except OSError:pass
  else:raise AssertionError('Excluded backend TMPDIR was writable')
 (here/'artifacts/sentinel.txt').write_text('real generic backend completed')
+(here/'artifacts/public-observed.txt').write_text(public.read_text())
 (here/'artifacts/result.json').write_text(json.dumps(dict(version=1,metrics=[dict(name='sentinel',value=1)],outputs=[dict(path='artifacts/sentinel.txt',label='inert sentinel')])))
 print('real-backend-sentinel',flush=True)
 '''
@@ -144,6 +154,7 @@ def _default_local_case(tmp_path, monkeypatch, directory, network_enabled, *, ex
     assert shutil.which('codex-linux-sandbox') is None
     public=tmp_path/'public';public.mkdir();objective=public/'objective.md'
     objective.write_text('Engineering transport only; no scientific qualification.')
+    (public/'sentinel.txt').write_text('declared public input')
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[str(fake)],max_tokens=10000,max_seconds=90,max_steps=4,
         model='no-model',reasoning_effort='high',search_policy=None,node_budget_mode='soft')
@@ -155,9 +166,16 @@ def _default_local_case(tmp_path, monkeypatch, directory, network_enabled, *, ex
         temporary=work/'work/native-tmp';temporary.mkdir()
         monkeypatch.setenv('TMPDIR',str(temporary))
     sibling=tmp_path/'sibling-private.txt';sibling.write_text('Unrelated private evidence')
+    (public/'private-link').symlink_to(sibling)
+    # The sentinel is outside every pre-existing scientific runtime/workspace
+    # mount: this absolute read fails on the original missing-public mapping.
+    assert not public.is_relative_to(work) and not work.is_relative_to(public)
+    assert not any(public.is_relative_to(Path(path).resolve()) for path in
+        ('/usr','/bin','/lib','/lib64',sys.base_prefix,sys.prefix))
     with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as listener:
         listener.bind(('127.0.0.1',0));listener.listen(8)
         probe=dict(private=str(root/'jobs/002.json'),sibling=str(sibling),workspace=str(work),
+            public=str(Path(c.read(root/'jobs/002.json')['public_root'])/'sentinel.txt'),
             port=listener.getsockname()[1],network_enabled=network_enabled,directory=directory,
             exclude_tmpdir=exclude_tmpdir,lifecycle_exit=lifecycle_exit)
         c.write(work/'work/probe.json',probe)
@@ -186,6 +204,8 @@ def _default_local_case(tmp_path, monkeypatch, directory, network_enabled, *, ex
     accepted=e.Records(config).accepted(transport['call_id']);call=e.Records(config).directory(accepted['call_id'])
     assert b'real-backend-sentinel' in (call/'stdout.raw').read_bytes()
     assert c.read(call/'completed.json')['status']=='known_success'
+    assert (public/'sentinel.txt').read_text()=='declared public input'
+    assert (call/'outputs/public-observed.txt' if directory else work/'artifacts/public-observed.txt').read_text()=='declared public input'
     if directory:
         assert (call/'outputs/sentinel.txt').read_text()=='real generic backend completed'
         assert (target/'input.txt').read_text()=='accepted scientific input'
@@ -317,6 +337,36 @@ def test_unproven_native_permissions_refuse_managed_launch_without_overrides(tmp
     scope=dict(job_sha256=snapshot['task_sha256'])
     accepted=dict(native_attempt=snapshot['native_attempt'],scope=scope)
     with pytest.raises(e.UnsupportedExecution,match='unsupported'):
+        launch(dict(scope=scope),accepted,['must-never-be-spawned'],str(work))
+    assert not list(record.glob('**/process.json'))
+
+
+@pytest.mark.parametrize('overlap',['control-ancestor','native-home-ancestor','native-home-child','runtime','temporary-mount'])
+def test_declared_public_root_overlap_refuses_before_scientific_launch(tmp_path,monkeypatch,overlap):
+    from scidiscovery.research_loop import native_execution
+    actual=actual_native()
+    public=tmp_path/'public';public.mkdir()
+    home=tmp_path/'home';home.mkdir()
+    if overlap=='control-ancestor':public=tmp_path
+    elif overlap=='native-home-ancestor':home=public/'home';home.mkdir()
+    elif overlap=='native-home-child':public=home/'public';public.mkdir()
+    elif overlap=='runtime':public=Path('/usr')
+    elif overlap=='temporary-mount':public=Path('/tmp')
+    objective=tmp_path/'objective.md';objective.write_text('Inert public namespace negative control.')
+    root=tmp_path/'instance'
+    controller.prepare(root,objective,public,[str(actual)],experiment_mode='local',
+        max_tokens=1000,max_seconds=30,max_steps=2,model='no-model',reasoning_effort='high',search_policy=None)
+    c.build_job(root,1,'W',[]);work=c.workspace(root,1);record=execution.origin(root,1)
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/001.json')))
+    (home/'config.toml').write_text('[sandbox_workspace_write]\nnetwork_access=false\n')
+    monkeypatch.setenv('CODEX_HOME',str(home))
+    arguments=[str(actual),'exec','--sandbox','workspace-write','-C',str(work),'-']
+    _,launch=native_execution.prepare(root,1,record,work,home,arguments,standard=True)
+    snapshot=c.read(record/'native-execution-permissions.json')
+    assert 'public root overlaps' in snapshot['unsupported']
+    scope=dict(job_sha256=snapshot['task_sha256'])
+    accepted=dict(native_attempt=snapshot['native_attempt'],scope=scope)
+    with pytest.raises(e.UnsupportedExecution,match='public root overlaps'):
         launch(dict(scope=scope),accepted,['must-never-be-spawned'],str(work))
     assert not list(record.glob('**/process.json'))
 

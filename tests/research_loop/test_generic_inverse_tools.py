@@ -401,26 +401,44 @@ def test_generic_candidates_are_registered_independently_of_optional_domain_obse
     if observer == 'unavailable':assert fact['coverage']['status'] == 'unavailable'
 
 
-def test_generic_isolated_delivery_keeps_large_manifest_and_all_objects(tmp_path):
+@pytest.mark.process_e2e
+@pytest.mark.parametrize('runtime', ['shared', 'copied-venv'])
+def test_generic_isolated_delivery_keeps_large_manifest_and_all_objects(tmp_path, runtime):
     from scidiscovery.research_loop import protocol
     if shutil.which('bwrap') is None:pytest.skip('Actual namespace required')
+    python = Path(sys.executable)
+    if runtime == 'copied-venv':
+        # A fixture only: delivery reuses the operator's existing environment.
+        environment = tmp_path / 'copied-runtime';(environment / 'bin').mkdir(parents=True)
+        python = environment / 'bin/python'
+        shutil.copyfile(Path(sys.executable).resolve(), python);python.chmod(0o755)
+        (environment / 'pyvenv.cfg').write_text(
+            'home = ' + str(Path(sys.base_prefix) / 'bin') + '\ninclude-system-site-packages = true\n')
+        assert python.resolve() == python and not python.is_symlink()
     stage=tmp_path/'stage';inputs=stage/'inputs';inputs.mkdir(parents=True)
     target=tmp_path/'target';target.mkdir()
-    source=Path(protocol.__file__).resolve();shutil.copyfile(source,inputs/'scid-current-protocol')
+    private = [tmp_path/'private-control/settings.json', tmp_path/'.codex/auth.json']
+    for path in private:
+        path.parent.mkdir(parents=True, exist_ok=True);path.write_text('private fixture; never mounted')
+    source=inputs/'scid-current-protocol'
+    source.write_text(Path(protocol.__file__).read_text() +
+        '\nimport ssl\nfrom pathlib import Path\n' +
+        'assert all(not Path(path).exists() for path in ' + repr([str(path) for path in private]) + ')\n')
     artifact=inputs/'artifact';artifact.write_bytes(b'exact managed artifact')
     objects={'artifact':c.digest(artifact)}
     for index in range(150):
         name='outputs/'+str(index)+'x'*170
         item=inputs/name;item.parent.mkdir(exist_ok=True);item.write_text('exact output '+str(index))
         objects[name]=c.digest(item)
-    python=Path(sys.executable);module=Path(generic_delivery.__file__).resolve()
+    spec=generic_delivery.descriptor(target, python=str(python))
+    assert set(spec['config']['runtime_roots']) == {sys.base_prefix,
+        sys.prefix if runtime == 'shared' else str(environment)}
     request=dict(phase='promote',scope=dict(handoff_protocol=protocol.CURRENT),stage=str(stage),
         operation_id='e'*64,candidate_id='local-explicit',artifact_sha256=objects['artifact'],
-        config=dict(python=str(python)),target=dict(directory=str(target)),object_digests=objects,
+        config=spec['config'],target=spec['target'],object_digests=objects,
         context=dict(kind='managed_local_result',retained_metadata='x'*280000),
         inputs=[dict(label='scid-current-protocol',sha256=c.digest(source),size_bytes=source.stat().st_size),
             dict(label='runtime-python',invoked_path=str(python.absolute()),path=str(python.resolve()),sha256=c.digest(python.resolve()))])
-    spec=dict(launcher_argv=[sys.executable,str(module),'--isolate'],adapter=str(module))
     promoted=delivery._call(spec,request,10)
     assert promoted['status']=='confirmed'
     saved=target/request['operation_id'];manifest=saved/'manifest.json'

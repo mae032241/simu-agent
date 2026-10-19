@@ -16,6 +16,17 @@ sudo SCID_PYTHON=/absolute/python deploy/install.sh install
 scid-research --help
 ```
 
+Use the common installed framework and dependency environment across research
+projects. `SCID_PYTHON` can select an existing base Python or virtual environment;
+fresh scientific cases do not require creating a virtual environment, copying
+dependencies or reinstalling the framework. Select the existing runtime explicitly
+and keep it unchanged while frozen instances use it. Namespace launchers mount the
+declared runtime paths read-only. A fresh instance still has its own explicit root,
+exact input originals and new budgets; environment reuse does not inherit another
+instance's scientific state or usage. Clean-package installation checks use an
+isolated installation to validate distribution contents, independently of this
+scientific runtime policy.
+
 The defaults are `/opt/scidiscovery-thin` and `/usr/local/bin`.
 Override `SCID_INSTALL_ROOT`, `SCID_BIN_ROOT`, `SCID_BACKUP_ROOT` explicitly as
 canonical absolute paths; the command directory must already exist.
