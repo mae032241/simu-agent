@@ -92,5 +92,13 @@ def continue_instance(root, *, ack_correction=None, authorization_note=None):
             correction.acknowledge(root, ack_correction, authorization_note)
         elif authorization_note is not None:
             raise ValueError('An authorization note requires an exact correction trigger')
+        target = controller._wait_continuation_target(root)
         (root / 'pause.request').unlink(missing_ok=True)
-        return controller._run(root)
+        result = controller._run(root, continue_wait=target)
+        from . import control_operations
+        control_operations.apply_pending_budget(root)
+        return result
+
+
+# CLI and thin UI callers use the same durable control operations.
+from .control_operations import start_background, request_budget_amendment, operations, operation

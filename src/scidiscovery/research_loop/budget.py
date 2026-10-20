@@ -865,10 +865,16 @@ def usage_accounting(root, meter):
 
 
 def amend(root, *, max_tokens=None, max_seconds=None, max_steps=None, authorization_note, authorization_statement=None):
+    from .controller import _writer
+    with _writer(root):
+        return _amend_locked(root, max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps,
+                             authorization_note=authorization_note, authorization_statement=authorization_statement)
+
+
+def _validate_amendment(root, *, max_tokens=None, max_seconds=None, max_steps=None, authorization_note, authorization_statement=None):
     """Operator entry only. A note records a decision; it authenticates nobody."""
     from .protocol import require_current
     require_current(root)
-    from .controller import _writer
     if not isinstance(authorization_note, str) or not authorization_note.strip():
         raise ValueError('An explicit operator authorization note is required')
     if max_tokens is None and max_seconds is None and max_steps is None:
@@ -883,23 +889,32 @@ def amend(root, *, max_tokens=None, max_seconds=None, max_steps=None, authorizat
         raise ValueError('A step ceiling amendment requires the original operator statement')
     if authorization_statement is not None and (not isinstance(authorization_statement, str) or not authorization_statement.strip()):
         raise ValueError('The original operator statement must be nonempty')
-    with _writer(root):
-        if execution_blocked(root):
-            raise RuntimeError('Budget amendment requires no running or unknown original execution')
-        settings = contracts.settings(root)
-        with _ledger_writer(root):
-            events, parent = _events(root, settings)
-            value = snapshot(root, settings)
-            before = {key: value[key] for key in ('max_tokens', 'max_seconds')}
-            after = dict(before, **({} if max_tokens is None else dict(max_tokens=max_tokens)),
-                         **({} if max_seconds is None else dict(max_seconds=max_seconds)))
-            event = _append(root, settings, events, parent, kind='budget_amend', before=before,
-                            after=after, authorization_note=authorization_note.strip(),
-                            **(dict(before_max_steps=value['max_steps'], after_max_steps=max_steps, max_steps_delta=max_steps-value['max_steps']) if max_steps is not None else {}),
-                            **(dict(authorization_statement=authorization_statement.strip()) if authorization_statement is not None else {}))
-        return dict(status='budget_amended', amendment_seq=event['seq'], before=before, after=after,
-                    consumption='retained', authorization='operator_declaration_not_authentication',
-                    **(dict(before_max_steps=value['max_steps'], after_max_steps=max_steps, max_steps_delta=max_steps-value['max_steps']) if max_steps is not None else {}))
+
+
+def _amend_locked(root, *, max_tokens=None, max_seconds=None, max_steps=None, authorization_note, authorization_statement=None, operation_id=None):
+    """Original amendment policy, called only by an existing controller writer."""
+    _validate_amendment(root, max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps,
+                      authorization_note=authorization_note, authorization_statement=authorization_statement)
+    if execution_blocked(root):
+        raise RuntimeError('Budget amendment requires no running or unknown original execution')
+    settings = contracts.settings(root)
+    with _ledger_writer(root):
+        events, parent = _events(root, settings)
+        if operation_id is not None:
+            prior = next((event for event in events if event.get('operation_id') == operation_id), None)
+            if prior is not None:
+                return dict(status='budget_amended', amendment_seq=prior['seq'], before=prior['before'], after=prior['after'], consumption='retained')
+        value = snapshot(root, settings)
+        before = {key: value[key] for key in ('max_tokens', 'max_seconds')}
+        after = dict(before, **({} if max_tokens is None else dict(max_tokens=max_tokens)),
+                     **({} if max_seconds is None else dict(max_seconds=max_seconds)))
+        event = _append(root, settings, events, parent, kind='budget_amend', **(dict(operation_id=operation_id) if operation_id else {}), before=before,
+                        after=after, authorization_note=authorization_note.strip(),
+                        **(dict(before_max_steps=value['max_steps'], after_max_steps=max_steps, max_steps_delta=max_steps-value['max_steps']) if max_steps is not None else {}),
+                        **(dict(authorization_statement=authorization_statement.strip()) if authorization_statement is not None else {}))
+    return dict(status='budget_amended', amendment_seq=event['seq'], before=before, after=after,
+                consumption='retained', authorization='operator_declaration_not_authentication',
+                **(dict(before_max_steps=value['max_steps'], after_max_steps=max_steps, max_steps_delta=max_steps-value['max_steps']) if max_steps is not None else {}))
 
 class NodeBudgetUnavailable(ValueError):
     """An unaccepted node cannot fit its remaining authorized allocation."""
@@ -1405,11 +1420,20 @@ def final_a_receipt(accepted, intent, meter, shared):
     return receipt
 
 
-def native_completion_known(outcome):
+def native_completion_known(outcome, settings=None):
     """Execution completion is independent of token-accounting coverage."""
+    if settings is None:
+        # Older callers can recognize only the original Codex evidence shape;
+        # a new source string never selects its own completion protocol.
+        expected_backend, terminal_source = 'codex', 'turn.completed'
+    else:
+        from . import backends
+        backend = backends.selected(settings)
+        expected_backend, terminal_source = backend.name, backend.terminal_source
     return (type(outcome.get('returncode')) is int and outcome['returncode'] == 0
             and not outcome.get('stop_reason') and outcome.get('cleanup') == 'observed_group_cleaned'
-            and (outcome.get('metering') or {}).get('source') == 'turn.completed')
+            and outcome.get('native_backend','codex') == expected_backend
+            and (outcome.get('metering') or {}).get('source') == terminal_source)
 
 
 def validate_final_a_receipt(root, job, intent, outcome, meter=None):
@@ -1425,7 +1449,7 @@ def validate_final_a_receipt(root, job, intent, outcome, meter=None):
     if accepted is not None and outcome.get('returncode') == 0 and not outcome.get('stop_reason'):
         from .native_usage import tokens
         observation = outcome.get('metering') or {}
-        if (not native_completion_known(outcome)
+        if (not native_completion_known(outcome, contracts.settings(root))
                 or meter is not None and (tokens(meter) != meter or observation.get('tokens') != meter)
                 or observation.get('coverage') == 'terminal' and meter is None):
             raise ValueError('Final A completion lacks a known terminal execution or cleanup')
@@ -1505,7 +1529,7 @@ def _attempt_consumption(root, job, paths):
             seconds = duration
             continue
         meter = contracts.read(contracts.regular(path / 'usage.json')) if (path/'usage.json').exists() else None
-        if meter is None and not native_completion_known(dict(original,stop_reason=None)):
+        if meter is None and not native_completion_known(dict(original,stop_reason=None), contracts.settings(root)):
             raise ValueError('Missing billing has no known original completion')
         # An absent meter contributes no reported tokens to the lower bound;
         # retain its absence and unknown coverage, never publish a zero meter.

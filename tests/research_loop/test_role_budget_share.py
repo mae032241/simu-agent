@@ -36,7 +36,12 @@ def seal(root, step, role, parents, *, action='wait', tokens=10, plan=None, revi
     if role == 'H':payload.update(search_plan=plan)
     if role == 'A':payload.update(search_review=review, candidate_recommendation=recommendation, progress_assessment=None,
                                   decision_request=None, portfolio_review=None)
-    if role == 'W':payload.update(stage_intent='review', mechanism_findings=findings)
+    if role == 'W':
+        nominations = (dict(representatives=[], extras=[], gaps=[dict(mechanism_ref=row['mechanism_ref'],
+            reason='Fixture declares no scientific candidate suitability; the retained pool remains available to A.')
+            for row in job['candidate_nomination_mechanisms'] if row['status'] != 'waived'])
+            if job.get('candidate_nomination_mechanisms') else None)
+        payload.update(stage_intent='review', mechanism_findings=findings, candidate_nominations=nominations)
     if role in {'H', 'A'}:payload.update(next_action=action, route_reason='Exact scientific question')
     c.write(record / 'native-intent.json', dict(task_sha256=c.digest(path)))
     if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=selection_explanation()
@@ -133,21 +138,22 @@ def test_old_instance_without_policy_keeps_original_routes(tmp_path):
 
 def test_budget_refusal_never_substitutes_a_w_task(tmp_path, monkeypatch):
     root = scene(tmp_path)
-    # Historical role-share stop contract, before protected final completion.
-    settings = c.settings(root);settings.pop('final_a_completion_policy')
-    c.write(root/'settings.json', settings)
-    c.write(root/'settings-identity.json', dict(sha256=c.digest(root/'settings.json')))
     launched = drive(monkeypatch, {
         1: dict(action='experiment', plan=PLAN, tokens=100_000),
         2: dict(findings=FINDINGS, tokens=500_000),
         3: dict(action='revise_h', tokens=3_400_000)})
+    final = []
+    monkeypatch.setattr(controller, '_run_final',
+        lambda root, begin: final.append(begin) or dict(status='final_report'))
     result = controller.run(root)
-    assert result['status'] == 'role_budget_stop'
-    assert result['reason'] == 'role_share_thinking_reached'
+    assert result['status'] == 'final_report'
+    begin = budget.closeout_state(root)['begin']
+    assert final == [begin] and begin['mode'] == 'final'
+    assert begin['stop_reason'] == 'role_share_thinking_reached' and begin['source_cutoff'] == 3
     assert launched == [(1, 'H'), (2, 'W'), (3, 'A')]
     assert not (root / 'jobs/004.json').exists()
     before = list(launched)
-    assert controller.run(root)['status'] == 'role_budget_stop'
+    assert controller.run(root)['status'] == 'final_report'
     assert launched == before
 
 
@@ -189,16 +195,18 @@ def test_required_corrections_keep_the_original_retry_cap(tmp_path, monkeypatch)
 
 def test_no_valid_w_stops_without_dispatching_thinking(tmp_path, monkeypatch):
     root = scene(tmp_path)
-    # Historical role-share stop contract, before protected final completion.
-    settings = c.settings(root);settings.pop('final_a_completion_policy')
-    c.write(root/'settings.json', settings)
-    c.write(root/'settings-identity.json', dict(sha256=c.digest(root/'settings.json')))
     waived = dict(dispositions=[dict(mechanism_ref=ref, status='waived', reason='Fixture closes this branch') for ref in ('h001.m1', 'h001.m2')],
                   next_focus=None)
     launched = drive(monkeypatch, {1: dict(action='experiment', plan=PLAN, tokens=100_000), 2: dict(findings=FINDINGS, tokens=500_000),
         3: dict(action='revise_h', review=waived, tokens=3_400_000)})
+    final = []
+    monkeypatch.setattr(controller, '_run_final',
+        lambda root, begin: final.append(begin) or dict(status='final_report'))
     result = controller.run(root)
-    assert result['status'] == 'role_budget_stop' and result['reason'] == 'role_share_thinking_reached'
+    assert result['status'] == 'final_report'
+    begin = budget.closeout_state(root)['begin']
+    assert final == [begin] and begin['mode'] == 'final'
+    assert begin['stop_reason'] == 'role_share_thinking_reached' and begin['source_cutoff'] == 3
     assert launched == [(1, 'H'), (2, 'W'), (3, 'A')] and not (root / 'jobs/004.json').exists()
 
 

@@ -2,8 +2,9 @@
 
 [简体中文](README.zh-CN.md) | English
 
-SciDiscovery is a scientific research framework for Codex. It runs native H/W/A/E
-threads against an explicit objective and frozen inputs, with finite shared budgets,
+SciDiscovery is a CLI-first scientific research framework with Codex and an explicit
+agent-protocol backend. It runs H/W/A/E threads against an explicit objective and
+frozen inputs, with finite shared budgets,
 sealed scientific results and recovery of known calls. Scientific Workers own model
 choices and conclusions; deterministic control owns identities, input bindings,
 qualification checks, budgets and execution permissions.
@@ -28,7 +29,8 @@ the claims established by its exact inputs, experiment and validation contract.
 | Entrance | Purpose |
 | --- | --- |
 | `scid-research` | Prepare an instance; run, inspect, pause and continue research; close out results. |
-| `scid-research serve-ui` | Serve one explicitly selected instance, its controls and paginated sealed results. |
+| `scid-research start` | Start or reconnect to a detached controller for one explicit instance. |
+| `scid-research serve-ui` | Optional webpage for the same instance controls and paginated sealed results. |
 | `scid-research archive-*` / `checkpoint-*` | Export and inspect originals, restore selected material, or perform a bounded same-host cold transfer. |
 | `scid-experiment` | Use managed local experiments or a declared domain execution interface. |
 
@@ -53,9 +55,16 @@ Installation publishes `scid-research` and `scid-experiment` and requires a fres
 installation prefix. Choose optional plugins explicitly with `SCID_PLUGINS`;
 see [installation](docs/INSTALL.md) for dependencies, settings and removal.
 
-To start research, prepare a new instance with an objective file, public inputs,
-an explicit native launcher and finite token, time and step ceilings. Then run
-and inspect that exact instance. The [CLI guide](docs/ROOTLESS_CLI.zh-CN.md)
+To start research, copy [research.example.toml](research.example.toml), declare the
+objective, public inputs, backend permissions and finite budgets, then use
+`scid-research config-check --config research.toml` and
+`scid-research prepare --config research.toml`. Inspect and start that exact instance
+with `config-inspect --root /absolute/instance` and `start --root /absolute/instance`.
+The declaration affects new instances; existing instances retain their frozen settings.
+See [configuration and backend reference](docs/RESEARCH_CONFIGURATION.md).
+The webpage is optional and uses the same state and control logic; detached research
+continues when its webpage service exits. `result`, `materials` and `artifact` read or
+download exact sealed results through the CLI. The [CLI guide](docs/ROOTLESS_CLI.zh-CN.md)
 contains commands, policy examples, result retrieval and recovery rules.
 A single `codex` launcher defaults to local experiments: the native host handles
 ordinary-file submissions during W and returns responses automatically. Managed
@@ -120,7 +129,9 @@ usage and behavior are defined by the code and current reference documents.
 Workers and same-user host processes are trusted: control provides a soft boundary.
 The default managed local subprocess and an explicit science launcher provide
 their declared file views; generic native execution has no blanket physical-isolation
-guarantee. Network access follows the selected frozen native permissions.
+guarantee. Permission summaries separate requested settings from effective policy and
+enforcement; unrestricted Codex cannot enforce offline intent, and protocol launcher
+access remains unknown. See the [configuration reference](docs/RESEARCH_CONFIGURATION.md).
 Browser behavior, real native continuation, TCAD solvers and power-loss recovery
 need evidence for the exact candidate and environment. Source tests do not establish
 that qualification. Full cross-host disaster recovery is outside current support.

@@ -60,14 +60,14 @@ def _required(root, step, job, result, role, correction_request):
     return False
 
 
-def reason(root, step, job, result, role, correction_request=None):
+def reason(root, step, job, result, role, correction_request=None, *, allow_repeat=False):
     """Why control refuses the proposed optional H/A node, or None."""
     limits = configured(root)
     if limits is None or role not in THINKING or job.get('purpose') == 'closeout':
         return None
     if _required(root, step, job, result, role, correction_request):
         return None
-    if job['role'] == role and not (job.get('formal_review') or result.get('next_action')=='formal_review'):
+    if not allow_repeat and job['role'] == role and not (job.get('formal_review') or result.get('next_action')=='formal_review'):
         return 'role_repeat_without_evidence'
     meter, total = usage(root, step), c.settings(root)['max_tokens']
     if meter['thinking'] >= limits['max_thinking_share'] * total:
@@ -77,14 +77,14 @@ def reason(root, step, job, result, role, correction_request=None):
     return None
 
 
-def effective_route(root, step, result, job, route):
+def effective_route(root, step, result, job, route, *, allow_repeat=False):
     """Preserve required corrections; stop optional thinking without inventing work."""
     role, parents, instruction, evidence_return, current_h, current_w, correction_request, author = route
     # Author corrections are mandatory control repairs, not optional thinking.
     # Their existing finite correction allowance and global budget still apply.
     if author is not None:
         return (*route, None)
-    code = reason(root, step, job, result, role, correction_request)
+    code = reason(root, step, job, result, role, correction_request, allow_repeat=allow_repeat)
     if code is None:
         return (*route, None)
     # Insufficient allocation never authorizes another scientific task.

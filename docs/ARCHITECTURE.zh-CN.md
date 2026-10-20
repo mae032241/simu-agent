@@ -5,6 +5,14 @@
 新实例由 `scid-research` 管理，实验工具为 `scid-experiment`。没有 LLM Root、MCP 调度服务或后台 Root daemon。
 核心提供薄 CLI 与实例 UI；旧 CLI/MCP/UI、Root 宿主、平台配置生成与 legacy systemd 部署已退役。
 
+`research_config.py` 是 TOML、CLI 与宿主入口共同的准备、默认值和校验路径。新实例冻结实际生效设置；修改声明不更新已有实例。`backends.py` 将 Codex 与显式 protocol 输运隔开，不接管科学判断、预算或执行授权。protocol 权限为 launcher 提示，不证明隔离；不支持原生续接和完整作者证明，不能取得正式独审。开启子 Agent 也不证明作者或用量完整。具体字段与限制见[配置与后端参考](RESEARCH_CONFIGURATION.md)。
+
+冻结的权限摘要分别记录请求值、实际策略、实施方式与限制；标准 Codex danger-full-access 不强制离线，read-only 不因网络请求启用联网，protocol/自定义 launcher 仅作权限提示，实际访问未知。
+
+CLI 是应用核心，网页复用相同公共控制和读取逻辑。`control_operations.py` 持久记录 detached 推进及科学预算修订；独立控制进程使用原写锁，不依赖网页进程常驻。暂停阻止下一节点，已接受工作按原限制完成。预算修订在安全边界应用，不重置消费或未知用量；unknown 原调用须核对，不自动重发。
+
+`user_guidance.py` 将全局/角色建议绑定到下一匹配新任务或后续研究。待应用项可按 revision 修改/撤销，已应用任务输入不可改写，后续研究撤销另留未来生效回执。建议可不采纳；显式目标变更保留原目标记录，并声明生效节点，不授执行权限或科学资格。
+
 ## 责任与数据流
 
 ```text
@@ -134,6 +142,8 @@ managed policy、额外可写根以及无法忠实投影后端权限的自定义
 | 责任 | 唯一实现范围 |
 | --- | --- |
 | 实例准备、路由与暂停 | `research_loop/controller.py`、`runtime.py`、`instance_control.py` |
+| 统一配置与后端 | `research_config.py`、`backends.py` |
+| 后台操作与用户方向 | `control_operations.py`、`user_guidance.py` |
 | 原生执行、原线程续接与计量 | `native.py`、`execution.py`、`continuation.py` |
 | 科学合同、原文与成果 | `contracts.py`、`semantic.py`、`instance_science.py` |
 | 候选比较与交付 | `selection.py`、`delivery.py`、`worker_delivery.py` |
@@ -194,7 +204,7 @@ native home，保留配置、认证及权限来源；冻结绝对 launcher 调�
 显式策略优先且可关闭默认补填；自定义 launcher 和直接 controller API 调用仍须显式策略。
 该默认值不授权失败任务、科学工作修复、fragment 或执行唤醒续接。
 
-新 `prepare` 冻结 `final_a_completion_policy` version 1。普通状态检查剩余共享额度能否启动下一动作；该模式不为 protected FINAL 预扣共享 token、时间或步数，也不在启动时预付整个节点 token 目标。已报告 token 余额为正即通过普通 token 启动检查，仍须满足原有限时间、步数、完整性与执行门槛。H/W/A/E 单节点 token 目标统一为 soft，达线提示收口，W 新实验须先交 A review，原节点可以完成原结果；author closeout 的 token permit 同样为软目标，有限时间仍强制执行。协议 23 仅接受 soft 节点设置；旧协议只读，不静默改写冻结 hard 设置。不能启动便在现有控制账本进入持久 FINAL。每个 FINAL 周期通过 `final_a_return` 只接受一个精确原始 A，基于已有已接受 W 给结论、明确选择，并说明未满足目标与缺失输入。共享 token、总时间或步数预算不足、为零或超额均不否决这次 A；有原件与交付权限时由 host 执行其原授权提交和同操作确认，输出真实结果。缺少 W、原件、权限或未核对原执行时明确未提交，不制造科学结果。未配置可选节点预算时，原冻结全局 token/时间设置提供最终调用的参考目标与有限单次时长。
+新 `prepare` 冻结 `final_a_completion_policy` version 1。普通状态检查剩余共享额度能否启动下一动作；该模式不为 protected FINAL 预扣共享 token、时间或步数，也不在启动时预付整个节点 token 目标。已报告 token 余额为正即通过普通 token 启动检查，仍须满足原有限时间、步数、完整性与执行门槛。H/W/A/E 单节点 token 目标统一为 soft，达线提示收口，不仅因达线拒绝新受管实验或强制转 A，原节点可以完成原结果；author closeout 的 token permit 同样为软目标，有限时间仍强制执行。协议 23 仅接受 soft 节点设置；旧协议只读，不静默改写冻结 hard 设置。不能启动便在现有控制账本进入持久 FINAL。每个 FINAL 周期通过 `final_a_return` 只接受一个精确原始 A，基于已有已接受 W 给结论、明确选择，并说明未满足目标与缺失输入。共享 token、总时间或步数预算不足、为零或超额均不否决这次 A；有原件与交付权限时由 host 执行其原授权提交和同操作确认，输出真实结果。缺少 W、原件、权限或未核对原执行时明确未提交，不制造科学结果。未配置可选节点预算时，原冻结全局 token/时间设置提供最终调用的参考目标与有限单次时长。
 
 provider 已报告实际用量、cached input、时间及步数全部保留；未知账单继续标注未知，不估算扣费，原上限不改、不退款；`final_overrun` 单列 token 超额。同一 FINAL 周期不派发新的 W/E、独立科学审查、纠正节点或另一轮 A，原 host 提交内必要机械资格检查仍保留。
 冻结的 output-repair 策略仅可续接同一最终 A 任务补全输出，保留原授权、累计用量、
@@ -232,6 +242,7 @@ producer，编译 V3 输入保持原 compiler 链。明确不完整的声明不�
 或插件名称分支决定科学行为。schema 结构、声明的科学语义与 validator 必须一致；
 工程故障不能伪装成科学拒绝或科学重试理由。恢复保留原限制和失败证据。
 只读视图与 UI 呈现同一封存科学字节，不改写科学内容。
+CLI result/materials/artifact 与网页通过同一精确原件 API 读取，下载不覆盖已有目标；网页配置、实例选择、预算排队与用户方向复用公共接口，只打开明确选择的实例。
 
 ## 支持与资格
 

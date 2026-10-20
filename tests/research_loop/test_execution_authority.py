@@ -70,7 +70,7 @@ def test_loopback_host_rejects_origin_and_old_boot_without_http(tmp_path):
     root, secret = prepare(tmp_path)
     first = InstanceUI(root, secret_file=secret); first.host = '127.0.0.1:18751'
     status, _, headers = first.get('/manage?' + urlencode({'token': first.management_token}), host=first.host)
-    assert status == 303 and headers['Location'] == '/'
+    assert status == 200 and 'Location' not in headers
     cookie = headers['Set-Cookie']
     assert first.get('/', host=first.host, cookie=cookie)[0] == 200
     with pytest.raises(PermissionError, match='Host'):

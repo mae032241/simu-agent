@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import os
-import shutil
+import tempfile
+from pathlib import Path
+import sys
 
-from . import budget, contracts, controller, search
+from . import budget, contracts, controller, search, research_config, instance_control
 from .instance_control import status, request_pause, continue_instance
 
 
@@ -15,15 +16,18 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='scid-research', description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     prepare = commands.add_parser('prepare', help='Create a fresh instance with explicit finite budgets')
-    prepare.add_argument('--root', type=Path, required=True)
-    prepare.add_argument('--objective', type=Path, required=True)
+    prepare.add_argument('--config', type=Path, help='Single research TOML declaration; cannot mix with preparation flags')
+    prepare.add_argument('--root', type=Path)
+    prepare.add_argument('--objective', type=Path)
     prepare.add_argument('--user-update', type=Path, action='append', default=[], help='Freeze an additional user statement in global inputs; repeat for more')
-    prepare.add_argument('--public-root', type=Path, required=True)
+    prepare.add_argument('--public-root', type=Path)
     prepare.add_argument('--source-restrictions', type=Path, help='Operator source declarations JSON array: exact absolute source, sha256, restriction (clear/restricted); source restrictions only, not review or execution permission')
     prepare.add_argument('--enable-formal-review', action='store_true', help='Allow an explicit A formal_review request for one selected scientific object; requires complete real native participant identities and grants no execution permission')
     prepare.add_argument('--enable-execution-authority', action='store_true', help='Freeze the optional execution request/decision contract; requires formal review and grants no execution without explicit resources and the trusted gate')
     prepare.add_argument('--execution-resource-policy', type=Path, help='Explicit version1 cumulative allowance JSON: wall_time_seconds/max_storage_bytes; no default grant')
-    prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
+    prepare.add_argument('--native-launcher-json', help='An argv JSON array, e.g. ["codex"]')
+    prepare.add_argument('--native-backend', choices=['codex', 'protocol'], default='codex')
+    prepare.add_argument('--native-options-json', help='Explicit inline backend permission/options JSON; omitted uses the same frozen defaults as TOML')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
     prepare.add_argument('--experiment-mode', choices=['local', 'external'], help='Host-configured W execution (local) or launcher-owned execution (external); standard codex defaults to local, custom launchers to external')
     prepare.add_argument('--execution-config',type=Path,help='Public executor/configuration JSON for registered host-configured execution; no credentials or host identity fields; conflicts with external mode')
@@ -42,13 +46,57 @@ def main(argv=None):
     prepare.add_argument('--worker-resume-policy', type=Path, help='Explicit qualified finite continuation policy JSON; omitted standard codex uses at most two output-only repairs in its original home; custom launchers have no default')
     prepare.add_argument('--max-output-item-bytes', type=int, help='Optional explicit per-file storage quota; default has no storage size cap')
     prepare.add_argument('--max-output-total-bytes', type=int, help='Optional explicit total deliverable storage quota; default has no storage size cap')
-    prepare.add_argument('--max-tokens', type=int, required=True)
-    prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum authorized runtime: advancement and accepted execution waiting; idle pauses do not consume this ceiling')
-    prepare.add_argument('--max-steps', type=int, required=True)
-    prepare.add_argument('--model', default='gpt-6.1-sol')
-    prepare.add_argument('--reasoning-effort', default='high')
-    prepare.add_argument('--service-tier', default='default')
+    prepare.add_argument('--max-tokens', type=int)
+    prepare.add_argument('--max-seconds', type=float, help='Maximum authorized runtime: advancement and accepted execution waiting; idle pauses do not consume this ceiling')
+    prepare.add_argument('--max-steps', type=int)
+    prepare.add_argument('--model')
+    prepare.add_argument('--reasoning-effort')
+    prepare.add_argument('--service-tier')
     prepare.add_argument('--role-profiles', type=Path, help='Optional H/W/A/E model, reasoning_effort and service_tier overrides; omitted roles/fields inherit global defaults')
+    config_check = commands.add_parser('config-check', help='Read-only validation of the effective research TOML configuration')
+    config_check.add_argument('--config', type=Path, required=True)
+    config_inspect = commands.add_parser('config-inspect', help='Inspect effective TOML or exact frozen instance settings; host-private output')
+    config_source = config_inspect.add_mutually_exclusive_group(required=True)
+    config_source.add_argument('--config', type=Path)
+    config_source.add_argument('--root', type=Path)
+    progress_parser = commands.add_parser('progress', help='Read bounded safe public draft messages and tool status for an exact native attempt')
+    progress_parser.add_argument('--root', type=Path, required=True)
+    progress_parser.add_argument('--step', type=int, required=True)
+    progress_parser.add_argument('--attempt', type=int, default=0)
+    progress_parser.add_argument('--cursor')
+    progress_parser.add_argument('--limit-bytes', type=int, default=65536)
+    for name in ('result', 'materials', 'artifact'):
+        command = commands.add_parser(name, help='Read exact sealed scientific originals; no advancement or qualification')
+        command.add_argument('--root', type=Path, required=True)
+        command.add_argument('--step', type=int, required=True)
+        if name == 'materials':
+            command.add_argument('--after', type=int, default=0)
+            command.add_argument('--limit', type=int, default=20)
+        if name == 'artifact':
+            command.add_argument('--index', type=int, required=True)
+            command.add_argument('--output', type=Path, required=True)
+    start = commands.add_parser('start', help='Start or reconnect to an instance controller independently of the CLI/UI process')
+    start.add_argument('--root', type=Path, required=True)
+    start.add_argument('--continue', dest='continue_run', action='store_true')
+    start.add_argument('--resume-step', type=int, help='Resume one exact known failed node through its existing frozen continuation gates')
+    start.add_argument('--ack-correction')
+    start.add_argument('--authorization-note')
+    operations = commands.add_parser('operations', help='Read host control operation receipts')
+    operations.add_argument('--root', type=Path, required=True)
+    operations.add_argument('--operation-id')
+    for name in ('guidance-submit', 'guidance-list', 'guidance-edit', 'guidance-revoke'):
+        command = commands.add_parser(name, help='Manage immutable applied and revisable pending user guidance')
+        command.add_argument('--root', type=Path, required=True)
+        if name in {'guidance-submit', 'guidance-edit'}:
+            command.add_argument('--text', required=True)
+        if name == 'guidance-submit':
+            command.add_argument('--target', choices=['global', 'H', 'W', 'A', 'E'], default='global')
+            command.add_argument('--kind', choices=['advice', 'goal_change'], default='advice')
+            command.add_argument('--scope', choices=['next', 'research'], default='next')
+            command.add_argument('--effective-step', type=int)
+        if name in {'guidance-edit', 'guidance-revoke'}:
+            command.add_argument('--guidance-id', required=True)
+            command.add_argument('--expected-revision', type=int, required=True)
     for name, help_text in (
             ('run', 'Run or recover only completed sealed scientific handoffs'),
             ('status', 'Read instance state without changing or starting work'),
@@ -119,10 +167,13 @@ def main(argv=None):
     execution_resume.add_argument('--authorization-note',required=True,help='Operator audit note only; not an execution decision')
     execution_resume.add_argument('--request-valid-seconds',type=float,help='Explicit finite replacement request validity when old request expired; no new execution allowance')
     execution_resume.add_argument('--maintenance',choices=['query','collect','cancel'],help='Maintain one existing accepted call within a current finite operation window; never prepare, submit or renew')
-    serve = commands.add_parser('serve-ui', help='Serve this explicit instance status and controls, with optional execution approval pages')
-    serve.add_argument('--root', type=Path, required=True)
-    serve.add_argument('--approval-secret-file', type=Path, required=True, help='Operator-owned regular 0600 browser host key; approval routes additionally require frozen authority')
-    serve.add_argument('--port', type=int, default=0, help='Loopback port; default selects an available port')
+    serve = commands.add_parser('serve-ui', help='Serve an explicit instance or a workspace for configuration and opening instances')
+    ui_source = serve.add_mutually_exclusive_group(required=True)
+    ui_source.add_argument('--root', type=Path)
+    ui_source.add_argument('--workspace', type=Path, help='Existing explicit directory; opens management before research preparation')
+    serve.add_argument('--instance-root', type=Path, action='append', default=[], help='Additional explicit instance choice; repeatable, no directory discovery')
+    serve.add_argument('--approval-secret-file', type=Path, help='Operator-owned regular 0600 browser host key; defaults to frozen ui.approval_secret_file')
+    serve.add_argument('--port', type=int, help='Loopback port; defaults to frozen ui.port or an available port')
     export = commands.add_parser('archive-export', help='Copy quiescent framework originals to a new inert read-only directory package; no writable restore')
     export.add_argument('--root', type=Path, required=True)
     export.add_argument('--output', type=Path, required=True)
@@ -145,77 +196,123 @@ def main(argv=None):
     resume_cold = commands.add_parser('checkpoint-restore', help='Restore a registered cold checkpoint only to its absent original same-host root; no automatic continuation')
     resume_cold.add_argument('--root', type=Path, required=True)
     resume_cold.add_argument('--package', type=Path, required=True)
-    args = parser.parse_args(argv)
-    root = (args.root.expanduser().absolute() if args.command in {'archive-export', 'archive-restore-material','checkpoint-enroll','checkpoint-export','checkpoint-restore'} else
-            args.root.expanduser().resolve()) if args.command != 'archive-inspect' else None
+    arguments = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(arguments)
+    root_arg = getattr(args, 'root', None)
+    root = ((root_arg.expanduser().absolute() if args.command in {'archive-export', 'archive-restore-material','checkpoint-enroll','checkpoint-export','checkpoint-restore'} else root_arg.expanduser().resolve())
+            if root_arg is not None else None)
     try:
-        if args.command not in {'prepare','status','archive-inspect','checkpoint-enroll','checkpoint-export','checkpoint-restore'}:
+        workspace_ui = args.command == 'serve-ui' and args.workspace is not None
+        if args.command not in {'prepare','config-check','config-inspect','status','archive-inspect','checkpoint-enroll','checkpoint-export','checkpoint-restore'} and not workspace_ui:
             from .protocol import require_current
             require_current(root)
-        if args.command == 'prepare':
-            role_profiles = None
-            if args.role_profiles is not None:
-                role_profiles = contracts.read(contracts.regular(args.role_profiles, limit=4096))
-                if not isinstance(role_profiles, dict):
-                    raise ValueError('Role profiles file must contain a JSON object')
-            launcher=json.loads(args.native_launcher_json)
-            resume_policy=contracts.read(contracts.regular(args.worker_resume_policy,limit=4096)) if args.worker_resume_policy is not None else None
-            node_policy=contracts.read(contracts.regular(args.node_budget_policy,limit=4096)) if args.node_budget_policy is not None else None
-            if (args.worker_resume_policy is None and args.worker_context is None
-                    and isinstance(launcher,list) and len(launcher)==1 and isinstance(launcher[0],str)
-                    and Path(launcher[0]).name=='codex'):
-                invoked=shutil.which(launcher[0])
-                if invoked is None:raise ValueError('The selected standard native launcher is unavailable')
-                # Preserve invocation symlinks; policy() freezes their exact target.
-                launcher=[str(Path(invoked).absolute())]
-                native_home=Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
-                if not native_home.is_absolute():raise ValueError('Frozen native output repair requires an absolute inherited CODEX_HOME')
-                native_home=native_home.resolve()
-                resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',
-                    output_repair=True,output_only=True,native_home=str(native_home))
-                if node_policy is None:
-                    # Reference each node to the original global ceilings. These
-                    # soft targets allocate nothing and never raise shared limits.
-                    node_policy={role:dict(max_observed_tokens=args.max_tokens,max_seconds=args.max_seconds) for role in 'HWAE'}
-            settings = controller.prepare(root, args.objective, args.public_root,
-                launcher, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
-                max_steps=args.max_steps, max_output_item_bytes=args.max_output_item_bytes, max_output_total_bytes=args.max_output_total_bytes, model=args.model, reasoning_effort=args.reasoning_effort, node_budget_mode=args.node_budget_mode,
-                service_tier=args.service_tier, user_updates=args.user_update,
-                role_profiles=role_profiles,
-                experiment_mode=args.experiment_mode,
-                execution_config=contracts.read(contracts.regular(args.execution_config)) if args.execution_config is not None else None,
-                source_restrictions=contracts.read(contracts.regular(args.source_restrictions)) if args.source_restrictions is not None else None,
-                formal_review_policy=dict(version=1) if args.enable_formal_review else None,
-                execution_authority_policy=dict(version=1) if args.enable_execution_authority else None,
-                execution_resource_policy=contracts.read(contracts.regular(args.execution_resource_policy)) if args.execution_resource_policy is not None else None,
-                candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
-                decision_contract_version=1 if args.decision_contract else None,
-                portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,
-                search_policy=contracts.read(contracts.regular(args.search_policy, limit=4096))
-                    if args.search_policy is not None else search.DEFAULT_POLICY,
-                correction_policy=contracts.read(contracts.regular(args.correction_policy, limit=4096))
-                    if args.correction_policy is not None else None,
-                node_budget_policy=node_policy,
-                delivery_policy=contracts.read(contracts.regular(args.delivery_policy, limit=64_000))
-                    if args.delivery_policy is not None else None,
-                worker_fragment_policy=dict(context=args.worker_context) if args.worker_context else None,
-                role_budget_policy=contracts.read(contracts.regular(args.role_budget_policy, limit=4096))
-                    if args.role_budget_policy is not None else None,
-                selection_policy=contracts.read(contracts.regular(args.selection_policy, limit=4096))
-                    if args.selection_policy is not None else None,
-                candidate_extra_slots=args.candidate_extra_slots,
-                resume_policy=resume_policy,
-                history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
-                    if args.history_observer_config is not None else None)
+        if args.command in {'config-check', 'config-inspect'}:
+            result = research_config.inspect(config=args.config, root=root)
+        elif args.command == 'prepare':
+            if args.config is not None:
+                supplied = [token.split('=', 1)[0] for token in arguments[1:] if token.startswith('--')]
+                if any(token != '--config' for token in supplied):
+                    raise ValueError('--config cannot be combined with preparation flags')
+                options = research_config.load(args.config)
+                root = options['root']
+                settings = research_config.prepare(**options)
+            else:
+                required = ('root', 'objective', 'public_root', 'native_launcher_json', 'max_tokens', 'max_seconds', 'max_steps')
+                missing = [name for name in required if getattr(args, name) is None]
+                if missing:
+                    raise ValueError('Preparation requires --config or explicit ' + ', '.join('--' + name.replace('_', '-') for name in missing))
+                role_profiles = None
+                if args.role_profiles is not None:
+                    role_profiles = contracts.read(contracts.regular(args.role_profiles, limit=4096))
+                    if not isinstance(role_profiles, dict):
+                        raise ValueError('Role profiles file must contain a JSON object')
+                launcher=json.loads(args.native_launcher_json)
+                resume_policy=contracts.read(contracts.regular(args.worker_resume_policy,limit=4096)) if args.worker_resume_policy is not None else None
+                node_policy=contracts.read(contracts.regular(args.node_budget_policy,limit=4096)) if args.node_budget_policy is not None else None
+                settings = research_config.prepare(root=root, objective=args.objective, public_root=args.public_root,
+                    launcher=launcher, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
+                    native_backend=args.native_backend,
+                    native_options=json.loads(args.native_options_json) if args.native_options_json is not None else None,
+                    max_steps=args.max_steps, max_output_item_bytes=args.max_output_item_bytes, max_output_total_bytes=args.max_output_total_bytes, model=args.model, reasoning_effort=args.reasoning_effort, node_budget_mode=args.node_budget_mode,
+                    service_tier=args.service_tier, user_updates=args.user_update,
+                    role_profiles=role_profiles,
+                    experiment_mode=args.experiment_mode,
+                    execution_config=contracts.read(contracts.regular(args.execution_config)) if args.execution_config is not None else None,
+                    source_restrictions=contracts.read(contracts.regular(args.source_restrictions)) if args.source_restrictions is not None else None,
+                    formal_review_policy=dict(version=1) if args.enable_formal_review else None,
+                    execution_authority_policy=dict(version=1) if args.enable_execution_authority else None,
+                    execution_resource_policy=contracts.read(contracts.regular(args.execution_resource_policy)) if args.execution_resource_policy is not None else None,
+                    candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
+                    decision_contract_version=1 if args.decision_contract else None,
+                    portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,
+                    search_policy=contracts.read(contracts.regular(args.search_policy, limit=4096))
+                        if args.search_policy is not None else search.DEFAULT_POLICY,
+                    correction_policy=contracts.read(contracts.regular(args.correction_policy, limit=4096))
+                        if args.correction_policy is not None else None,
+                    node_budget_policy=node_policy,
+                    delivery_policy=contracts.read(contracts.regular(args.delivery_policy, limit=64_000))
+                        if args.delivery_policy is not None else None,
+                    worker_fragment_policy=dict(context=args.worker_context) if args.worker_context else None,
+                    role_budget_policy=contracts.read(contracts.regular(args.role_budget_policy, limit=4096))
+                        if args.role_budget_policy is not None else None,
+                    selection_policy=contracts.read(contracts.regular(args.selection_policy, limit=4096))
+                        if args.selection_policy is not None else None,
+                    candidate_extra_slots=args.candidate_extra_slots,
+                    resume_policy=resume_policy,
+                    history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
+                        if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
             if settings.get('execution_config') is not None:
                 result['execution']=dict(executor=settings['execution_config']['executor'],
                     capabilities_status='awaiting_host_task_configuration')
         elif args.command == 'serve-ui':
-            if not 0 <= args.port <= 65535:
+            ui = {} if workspace_ui else contracts.settings(root).get('ui', {})
+            port = args.port if args.port is not None else ui.get('port', 0)
+            secret_file = args.approval_secret_file or ui.get('approval_secret_file')
+            if secret_file is None:
+                raise ValueError('serve-ui requires --approval-secret-file or frozen ui.approval_secret_file')
+            if not 0 <= port <= 65535:
                 raise ValueError('UI port must be between 0 and 65535')
             from . import instance_ui
-            result = instance_ui.serve(root, secret_file=args.approval_secret_file, port=args.port)
+            options = dict(workspace=True) if workspace_ui else {}
+            result = instance_ui.serve(args.workspace if workspace_ui else root,
+                secret_file=Path(secret_file), port=port, instance_roots=args.instance_root, **options)
+        elif args.command == 'progress':
+            from . import progress
+            result = progress.read(root, args.step, attempt=args.attempt, cursor=args.cursor, limit_bytes=args.limit_bytes)
+        elif args.command == 'start':
+            result = instance_control.start_background(root, continue_run=args.continue_run,
+                ack_correction=args.ack_correction, authorization_note=args.authorization_note, resume_step=args.resume_step)
+        elif args.command in {'result', 'materials', 'artifact'}:
+            from . import instance_science
+            if args.command == 'result':
+                with instance_science.science(root, args.step) as original:
+                    original.copy_to(sys.stdout.buffer)
+                return 0
+            if args.command == 'materials':
+                result = instance_science.materials(root, args.step, after=args.after, limit=args.limit)
+            else:
+                output = args.output.expanduser().absolute()
+                original, name = instance_science.artifact(root, args.step, args.index)
+                with original, tempfile.NamedTemporaryFile(dir=output.parent) as temporary:
+                    original.copy_to(temporary)
+                    temporary.flush(); os.fsync(temporary.fileno())
+                    os.link(temporary.name, output, follow_symlinks=False)
+                result = dict(status='artifact_downloaded', step=args.step, index=args.index, name=name, size_bytes=original.size)
+        elif args.command == 'operations':
+            result = (instance_control.operation(root, args.operation_id) if args.operation_id is not None
+                      else dict(status='operations', operations=instance_control.operations(root)))
+        elif args.command.startswith('guidance-'):
+            from . import user_guidance
+            if args.command == 'guidance-submit':
+                result = user_guidance.submit(root, args.text, target=args.target, kind=args.kind,
+                    scope=args.scope, effective_step=args.effective_step)
+            elif args.command == 'guidance-edit':
+                result = user_guidance.edit(root, args.guidance_id, args.text, expected_revision=args.expected_revision)
+            elif args.command == 'guidance-revoke':
+                result = user_guidance.revoke(root, args.guidance_id, expected_revision=args.expected_revision)
+            else:
+                result = dict(status='guidance_listed', guidance=user_guidance.list_guidance(root))
         elif args.command == 'archive-export':
             from .instance_archive import archive_export
             result = archive_export(root, args.output)
@@ -276,7 +373,7 @@ def main(argv=None):
                 result = dict(status='budget_amended', execution_resources=grant,
                               permission='Ceiling configuration only; no exact-call execution decision')
             else:
-                result = budget.amend(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds, max_steps=args.max_steps,
+                result = instance_control.request_budget_amendment(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds, max_steps=args.max_steps,
                                       authorization_note=args.authorization_note, authorization_statement=args.authorization_statement)
         elif args.command == 'pause':
             result = request_pause(root)
@@ -290,7 +387,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'final_a_completed', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected', 'material_restored', 'material_already_present','checkpoint_enrolled','checkpoint_exported','checkpoint_restored','checkpoint_restore_already_completed','execution_maintained'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'final_a_completed', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected', 'material_restored', 'material_already_present','checkpoint_enrolled','checkpoint_exported','checkpoint_restored','checkpoint_restore_already_completed','execution_maintained','config_checked','config_inspected','accepted','running','applied','operations','guidance_listed','pending','revoked','progress_read','progress_unavailable','artifact_downloaded'} else 2
 
 
 if __name__ == '__main__':

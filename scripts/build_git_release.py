@@ -26,6 +26,7 @@ ROOT_FILES = (
     "SECURITY.md",
     "conftest.py",
     "pyproject.toml",
+    "research.example.toml",
 )
 
 SOURCE_TREES = (
@@ -52,6 +53,7 @@ DOCUMENTS = (
     "docs/RELEASE.md",
     "docs/RELEASE.zh-CN.md",
     "docs/ROOTLESS_CLI.zh-CN.md",
+    "docs/RESEARCH_CONFIGURATION.md",
     "docs/role-result-json-protocol-v1.md",
     "docs/tcad_transport_contract.md",
 )

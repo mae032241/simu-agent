@@ -141,7 +141,7 @@ def _public_root(public, root, work, home, runtime_roots):
         raise UnsupportedExecution('Declared public root overlaps private control or a scientific namespace mount')
 
 
-def prepare(root, step, record, work, home, args, *, standard, resume_position=None):
+def prepare(root, step, record, work, home, args, *, standard, resume_position=None, native_options=None):
     """Freeze one host-only attempt; unsupported launchers still support reads."""
     from . import contracts as c, execution, experiments as e
     snapshot=record/'native-execution-permissions.json'
@@ -154,7 +154,19 @@ def prepare(root, step, record, work, home, args, *, standard, resume_position=N
     try:
         if not standard:
             raise e.UnsupportedExecution('This custom native launcher has no declared scientific subprocess sandbox; managed local launch is unsupported')
-        policy, originals=_permissions(home,work)
+        if native_options is None:
+            policy, originals=_permissions(home,work)
+        else:
+            if native_options['workspace']!='workspace-write':
+                raise e.UnsupportedExecution('Managed scientific subprocess projection currently supports only the Codex workspace-write declaration')
+            if (Path('/etc/codex/managed_config.toml').exists() or Path('/etc/codex/requirements.toml').exists()):
+                raise e.UnsupportedExecution('Managed native policy requires its original effective sandbox state')
+            policy=dict(writable_roots=[],network_access=native_options['network'],
+                        exclude_tmpdir_env_var=False,exclude_slash_tmp=False)
+            policy.update(native_options.get('sandbox_workspace_write',{}))
+            if policy['writable_roots']:
+                raise e.UnsupportedExecution('Additional native writable roots have no declared scientific namespace mapping')
+            originals=[]
         helper=_native_program(args[:1])
         bwrap=shutil.which('bwrap')
         if bwrap is None:raise e.UnsupportedExecution('The native scientific namespace wrapper is unavailable')

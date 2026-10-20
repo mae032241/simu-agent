@@ -714,7 +714,7 @@ def direct_sources(root, job):
                 or next((row['sha256'] for row in job.get('direct_originals',job['direct_refs']) if row['path']==ref['path']),None) != seal['raw_sha256']
                 or c.read(execution.record(root, step) / 'native-intent.json')['task_sha256'] != seal['job_sha256']
                 or type(outcome.get('returncode')) is not int or outcome['returncode'] != 0 or outcome.get('stop_reason')
-                or outcome.get('usage', {}).get('unknown_steps') != [] and not budget.native_completion_known(outcome)
+                or outcome.get('usage', {}).get('unknown_steps') != [] and not budget.native_completion_known(outcome, c.settings(root))
                 or outcome.get('raw_sha256') != seal['raw_sha256']
                 or c.read(record / 'result.json') != c.result_projection(source, payload)):
             raise ValueError('Direct scientific original or terminal identity changed')

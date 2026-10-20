@@ -35,7 +35,7 @@ def configuration(value):
 
 def _contract():
     files = [Path(__file__), Path(c.__file__), Path(review_rules.__file__), Path(c.__file__).with_name('native.py'),
-             Path(c.__file__).with_name('continuation.py')]
+             Path(c.__file__).with_name('continuation.py'), Path(c.__file__).with_name('backends.py')]
     return dict(version=1, instruction=review_rules.REVIEW_INSTRUCTION+' '+REVIEW_EVIDENCE_GUIDANCE,
         scope='Review only the exact supplied material and scientific question. Do not edit the subject. '
               'Use revise, blocked or inconclusive for unsupported claims. Review grants no execution permission.',
@@ -218,10 +218,11 @@ def _request_value(root, selected):
     current = contract(root)
     subject = _subject(root, selected)
     identity = authors(root, subject['producer_step']) if subject else dict(complete=False, participants=[])
-    launcher = c.settings(root)['native_launcher_argv']
+    from . import backends
+    backend = backends.selected(c.settings(root))
     reason = ('formal_review_subject_missing_or_ambiguous' if subject is None else
               'subject_authorship_unsupported' if not identity['complete'] else
-              'reviewer_identity_unsupported' if len(launcher)!=1 or Path(launcher[0]).name!='codex' else None)
+              'reviewer_identity_unsupported' if not backend.complete_authorship else None)
     return dict(contract=current, question=QUESTION, subject=subject,
                 authors=identity, unresolved_selection=selected if subject is None else None, reason=reason)
 
@@ -304,7 +305,8 @@ def unavailable_attempts(root, step, *, before_step=None):
 
 def choice_constraints(root, job, references=None):
     """Freeze existing failures, not a retry allowance or a second history store."""
-    launcher=c.settings(root)['native_launcher_argv']
+    from . import backends
+    backend=backends.selected(c.settings(root))
     if references is None:
         paths=sorted((Path(root)/'native-evidence').glob('*/formal-review-unavailable.json'),key=lambda path:int(path.parent.name))
         references=[q._ref(root,path) for path in paths if int(path.parent.name)<job['step']]
@@ -314,7 +316,7 @@ def choice_constraints(root, job, references=None):
         if (not 0<step<job['step'] or reference!=q._ref(root,c.host_record(c.workspace(root,step))/'formal-review-unavailable.json')
                 or value!=unavailable(root,step)):
             raise q.IntegrityError('Review choice constraint lost its exact unavailable original')
-    return dict(launcher_supported=len(launcher)==1 and Path(launcher[0]).name=='codex', unavailable=references)
+    return dict(launcher_supported=backend.complete_authorship, unavailable=references)
 
 
 def validate_choice(root, job, payload):

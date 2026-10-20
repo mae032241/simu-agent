@@ -36,7 +36,10 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             source_restrictions: list[dict] | None = None, formal_review_policy: dict | None = None,
             execution_authority_policy: dict | None = None,
             execution_resource_policy: dict | None = None,
-            candidate_extra_slots: int = 2) -> dict:
+            candidate_extra_slots: int = 2,
+            native_backend: str = 'codex', native_options: dict | None = None,
+            ui: dict | None = None, validate_only: bool = False,
+            objective_text: str | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     from . import candidate_nominations
     nomination_limits=candidate_nominations.configuration(candidate_extra_slots)
@@ -68,9 +71,17 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             raise ValueError(f"{name} must be a positive integer or null")
     if max_output_item_bytes is not None and max_output_total_bytes is not None and max_output_item_bytes > max_output_total_bytes:
         raise ValueError("Output item capacity exceeds total capacity")
-    if not all(isinstance(value, str) and value.strip()
-               for value in (model, reasoning_effort, service_tier)):
-        raise ValueError("Explicit model, reasoning effort and service tier are required")
+    from . import backends as agent_backends
+    backend_settings = agent_backends.configuration(native_backend, launcher,
+        {} if native_options is None else native_options)
+    launcher = backend_settings['native_launcher_argv']
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError('An explicit model is required')
+    if any(value is not None and (not isinstance(value, str) or not value.strip())
+           for value in (reasoning_effort, service_tier)):
+        raise ValueError('Reasoning effort and service tier must be nonempty strings or null')
+    if native_backend != 'codex' and resume_policy is not None:
+        raise ValueError('The selected backend does not support Codex continuation policies')
     from . import profiles
     frozen_profiles = profiles.normalize(role_profiles, dict(model=model, reasoning_effort=reasoning_effort,
         service_tier=service_tier)) if role_profiles is not None else None
@@ -93,9 +104,15 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             dict(executor='local_execution:command',configuration=dict(run_argv=[sys.executable],max_seconds=min(65,max_seconds))))
     if root.exists() or root.is_symlink():
         raise ValueError("Preparation requires a fresh directory")
-    if not objective.is_file() or not public_root.is_dir():
+    if not public_root.is_dir() or (objective_text is None and not objective.is_file()):
         raise ValueError("Explicit objective file and public directory are required")
-    text = objective.read_text(encoding="utf-8")
+    if objective_text is not None:
+        if not isinstance(objective_text, str):
+            raise ValueError("The objective must contain original user text")
+        if len(objective_text.encode('utf-8')) > 256_000:
+            raise ValueError("The objective text exceeds the 256000-byte limit")
+        objective = root.resolve() / "project/global/objective.md"
+    text = objective.read_text(encoding="utf-8") if objective_text is None else objective_text
     if not text.strip():
         raise ValueError("The objective must contain original user text")
     updates = [contracts.regular(Path(path)).read_text(encoding='utf-8')
@@ -158,6 +175,9 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    settings.update(backend_settings)
+    if ui is not None:
+        settings['ui'] = dict(ui)
     from .protocol import CURRENT
     if frozen_profiles is not None:
         settings['role_profiles'] = frozen_profiles
@@ -210,6 +230,12 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['candidate_nomination_policy'] = nomination_limits
     if correction_limits is not None:
         settings['correction_policy'] = correction_limits
+    if review_policy is not None:
+        settings['formal_review_policy'] = dict(review_policy)
+    if authority_policy is not None:
+        settings['execution_authority_policy'] = dict(authority_policy)
+    if validate_only:
+        return settings
     root.mkdir(parents=True)
     globals_ = root / 'project/global'
     (globals_ / 'updates').mkdir(parents=True)
@@ -281,7 +307,10 @@ def run(root: Path) -> dict:
     require_current(root)
     root = Path(root).resolve()
     with _writer(root), _inactive_on_error(root):
-        return _run(root)
+        result = _run(root)
+        from . import control_operations
+        control_operations.apply_pending_budget(root)
+        return result
 
 
 def _record(root, step):
@@ -430,20 +459,19 @@ def _route(root, step, role, result, job, current_h, current_w):
     return (*route, current_h, current_w)
 
 
-def _terminal_success(record):
+def _terminal_success(root, record):
     """Known terminal turn, including diagnosed missing output, never unknown work."""
     try:
         outcome = contracts.read(record / 'native-outcome.json')
         final = None
         if outcome.get('final_a_completion') is not None:
-            root, step = ((record.parents[3],int(record.parents[1].name)) if record.parent.name == 'continuations'
-                          else (record.parents[1],int(record.name)))
+            step = int(record.parents[1].name) if record.parent.name == 'continuations' else int(record.name)
             job = contracts.read(root / 'jobs' / f'{step:03d}.json')
             intent = contracts.read(record / 'native-intent.json')
             final = budget.validate_final_a_receipt(root, job, intent, outcome)
         if (type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
                 or outcome.get('stop_reason')
-                or budget.final_a_usage_unknown(final, outcome['usage']) and not budget.native_completion_known(outcome)):
+                or budget.final_a_usage_unknown(final, outcome['usage']) and not budget.native_completion_known(outcome, contracts.settings(root))):
             return False
         raw, pending = record / 'science-output.json', record / 'result.pending.json'
         if outcome.get('output_status') == 'missing':
@@ -458,7 +486,59 @@ def _seal_reason(error):
     return str(error) if isinstance(error, ValueError) else type(error).__name__
 
 
-def _run(root):
+def _step_numbers(root, first_step):
+    """Re-read amended ceilings only at the boundary before a new task."""
+    from . import control_operations
+    step = first_step
+    while True:
+        if not (root / 'jobs' / f'{step:03d}.json').exists() and not budget.execution_blocked(root):
+            control_operations.apply_pending_budget(root)
+        if step > budget.historical_step_limit(root):
+            return
+        yield step
+        step += 1
+
+
+def _wait_continuation_target(root):
+    """Capture the last exact wait while the caller owns the controller writer."""
+    paths = list((root / 'jobs').glob('[0-9]*.json'))
+    if not paths:
+        return None
+    path = max(paths, key=lambda path: int(path.stem))
+    job = contracts.read(contracts.regular(path))
+    step = job['step']
+    record = _record(root, step)
+    identity = record / 'result-identity.json'
+    if not identity.exists() or job['role'] != 'A' or job.get('purpose') or job.get('formal_review'):
+        return None
+    result = contracts.read(contracts.regular(record / 'result.json'))
+    if result.get('next_action') != 'wait':
+        return None
+    return dict(source_step=step, seal_sha256=contracts.digest(contracts.regular(identity)))
+
+
+def _continue_wait(root, step, job, result, next_role, target):
+    """Retain a single explicit boundary; ordinary reconstruction never adds one."""
+    if (next_role is not None or job['role'] != 'A' or result.get('next_action') != 'wait'
+            or job.get('purpose') or job.get('formal_review')):
+        return False
+    path = root / 'host-control' / 'wait-continuations' / f'{step:03d}.json'
+    expected = dict(source_step=step,
+        seal_sha256=contracts.digest(contracts.regular(_record(root, step) / 'result-identity.json')))
+    if path.exists():
+        if contracts.read(contracts.regular(path)) != expected:
+            raise ValueError('Wait continuation differs from its exact sealed source')
+        return True
+    if target != expected or (root / 'jobs' / f'{step + 1:03d}.json').exists():
+        return False
+    observed = native.usage(root)
+    if observed.get('blocking_unknown_steps', observed['unknown_steps']) or budget.execution_blocked(root):
+        return False
+    contracts.write(path, expected)
+    return True
+
+
+def _run(root, *, continue_wait=None):
     from .protocol import require_current
     require_current(root)
     settings = contracts.settings(root)
@@ -501,7 +581,7 @@ def _run(root):
             cursor = dict(zip(('role','parents','instruction','evidence_return','correction_request','author_correction'),route))
             cursor['source_refs'] = [dict(step=job['step'],seal_sha256=seal_sha) for job,_,_,seal_sha in sources]
         return _start_budget_closeout(root,cutoff,step,blocked_role,reason,resume_cursor=cursor)
-    for step in range(first_step, budget.historical_step_limit(root) + 1):
+    for step in _step_numbers(root, first_step):
         record = _record(root, step)
         work = contracts.workspace(root, step)
         identity = record / "result-identity.json"
@@ -526,11 +606,11 @@ def _run(root):
                     except OutputRepairRequired as error:
                         return _finish(root, settings, 'output_repair_required', completed, last, reason=error.code, next_role=role)
                     except Exception:
-                        if not _terminal_success(execution.record(root, step)):
+                        if not _terminal_success(root, execution.record(root, step)):
                             return _finish(root, settings, "native_outcome_unsealed", completed, last,
                                 reason="Original execution lost its verified completion; preserved without replay",
                                 next_role=role)
-                if not _terminal_success(execution.record(root, step)):
+                if not _terminal_success(root, execution.record(root, step)):
                     return _finish(root, settings, "native_outcome_unsealed", completed, last,
                         reason="Retain the original native work; its terminal scientific output is unverified",
                         next_role=role)
@@ -644,7 +724,7 @@ def _run(root):
             except OutputRepairRequired as error:
                 return _finish(root, settings, 'output_repair_required', completed, last, reason=error.code, next_role=role)
             except Exception as error:
-                if _terminal_success(execution.record(root, step)):
+                if _terminal_success(root, execution.record(root, step)):
                     return _finish(root, settings, "seal_pending", completed, last,
                         reason=f"Native turn completed; host sealing requires repair: {_seal_reason(error)}",
                         next_role=role)
@@ -675,7 +755,7 @@ def _run(root):
             outcome = contracts.read(execution.record(root, step) / "native-outcome.json")
             if (type(outcome.get("returncode")) is not int or outcome["returncode"] != 0 or outcome.get("stop_reason")
                     or outcome['usage'].get('blocking_unknown_steps',outcome['usage']['unknown_steps'])
-                    and not budget.native_completion_known(outcome)):
+                    and not budget.native_completion_known(outcome, contracts.settings(root))):
                 raise ValueError("Native outcome is ineligible for sealed continuation")
             job = _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction)
             result = contracts.validate(work)
@@ -708,9 +788,14 @@ def _run(root):
                 root, step, result, job, _route(root, step, role, result, job, current_h, current_w))
             next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author = semantic.effective_route(
                 root, step, result, job, (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction))
+            wait_continued = _continue_wait(root, step, job, result, next_role, continue_wait)
+            if wait_continued:
+                next_role, next_parents = 'A', _parents(current_h, current_w, step)
+                next_instruction = 'The operator explicitly requested continuation from the retained wait. Reassess the original goal, evidence and remaining limitations before choosing the next scientific route.'
             (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author,
              share_stop) = role_share.effective_route(root, step, result, job,
-                (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author))
+                (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author),
+                allow_repeat=wait_continued)
         except (KeyError, ValueError, OSError, TypeError) as error:
             return _finish(root, settings, "sealed_node_invalid", completed, last,
                 reason=f"Retained node is not eligible for routing ({type(error).__name__})", next_role=role)
@@ -994,6 +1079,8 @@ def _run_final(root, begin):
         if not job.get('final_only'):
             return _closeout_result(root, 'retained_job_conflict', reason='final_assignment_changed', step=step)
     else:
+        from . import control_operations
+        control_operations.apply_pending_budget(root)
         parents = []
         for role in ('H', 'W', 'A', 'E'):
             matching = [number for number in accepted if contracts.read(root / 'jobs' / f'{number:03d}.json')['role'] == role]
@@ -1036,7 +1123,7 @@ def _run_final(root, begin):
     try:
         record = _record(root, step)
         if (record / 'native-intent.json').exists():
-            if runtime.node_state(root, step) == 'running' or _terminal_success(record):
+            if runtime.node_state(root, step) == 'running' or _terminal_success(root, record):
                 native.wait_native(root, step)
             else:
                 return _closeout_result(root, 'closeout_native_unsealed', reason='exact_final_original_unverified', step=step)
@@ -1063,7 +1150,7 @@ def _collect_final_a(root, accepted):
                     and not (current/'native-outcome.json').exists())
                 if runtime.node_state(root, step) == 'running' or startup_pending:
                     native.wait_native(root, step)
-                elif _terminal_success(current):
+                elif _terminal_success(root, current):
                     native.wait_native(root, step)
                 else:
                     raise RuntimeError('The exact final A has no verified terminal output')
@@ -1312,6 +1399,9 @@ def _run_closeout(root):
     if contracts.settings(root).get('final_a_completion_policy') is not None:
         last_step += 1  # A preserved unused repair may occupy the last granted slot.
     for step in range(begin['first_step'], last_step + 1):
+        if not (root / 'jobs' / f'{step:03d}.json').exists():
+            from . import control_operations
+            control_operations.apply_pending_budget(root)
         record = _record(root, step)
         path = root / 'jobs' / f'{step:03d}.json'
         if not (record / 'result-identity.json').exists():
@@ -1323,7 +1413,7 @@ def _run_closeout(root):
                 try:
                     if runtime.node_state(root, step) == 'running':
                         native.wait_native(root, step)
-                    elif _terminal_success(execution.record(root, step)):
+                    elif _terminal_success(root, execution.record(root, step)):
                         native.wait_native(root, step)
                     else:
                         return _closeout_result(root, 'closeout_native_unsealed', step=step,
@@ -1474,7 +1564,7 @@ def closeout(root, *, export_only=False):
             record = _record(root, step)
             if (record / 'result-identity.json').exists():
                 contracts.validate(contracts.workspace(root, step));cutoff = step
-            elif not export_only and (record / 'native-intent.json').exists() and _terminal_success(execution.record(root, step)):
+            elif not export_only and (record / 'native-intent.json').exists() and _terminal_success(root, execution.record(root, step)):
                 continuation.seal_or_repair(root, step);cutoff = step
             else:
                 break
@@ -1531,17 +1621,22 @@ def worker_resume(root: Path, step: int):
     require_current(root)
     root = Path(root).resolve()
     with _writer(root), _inactive_on_error(root, 'worker_resume_failed'):
-        settings = contracts.settings(root)
-        try:
-            if type(step) is not int or not 0 < step <= budget.historical_step_limit(root):
-                raise ValueError('An exact prepared node is required')
-            continuation.start(root, step)
+        return _worker_resume_locked(root, step)
+
+
+def _worker_resume_locked(root, step):
+    """Original resume gates under an already-held controller writer."""
+    settings = contracts.settings(root)
+    try:
+        if type(step) is not int or not 0 < step <= budget.historical_step_limit(root):
+            raise ValueError('An exact prepared node is required')
+        continuation.start(root, step)
+        return _run(root)
+    except (continuation.ResumeUnavailable, budget.NodeBudgetUnavailable) as error:
+        if isinstance(error, budget.NodeBudgetUnavailable) and error.reason == 'worker_resume_budget_unavailable':
             return _run(root)
-        except (continuation.ResumeUnavailable, budget.NodeBudgetUnavailable) as error:
-            if isinstance(error, budget.NodeBudgetUnavailable) and error.reason == 'worker_resume_budget_unavailable':
-                return _run(root)
-            budget.inactive(root, 'worker_resume_unavailable')
-            return dict(status='worker_resume_unavailable', reason=getattr(error, 'reason', str(error)), usage=native.usage(root))
+        budget.inactive(root, 'worker_resume_unavailable')
+        return dict(status='worker_resume_unavailable', reason=getattr(error, 'reason', str(error)), usage=native.usage(root))
 
 
 def execution_recover(root: Path, step: int):

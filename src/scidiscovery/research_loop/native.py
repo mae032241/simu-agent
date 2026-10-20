@@ -16,9 +16,8 @@ import subprocess
 import sys
 import time
 
-from . import budget as control_budget, execution, runtime, search, checkpoint, profiles
+from . import budget as control_budget, execution, runtime, search, checkpoint, profiles, backends
 from .output_repair import OutputRepairRequired
-from .native_usage import SessionUsage
 from .contracts import (ACTIONS, actions, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
@@ -174,11 +173,8 @@ def run_native(root: Path, step: int, attempt=0):
     # W statistics reuse this exact node anchor, never a second acceptance clock.
     search_intent = dict(intent, search_slice=intent['budget_slice']) if intent.get('budget_slice') is not None and job.get('search') and job['role'] == 'W' else intent
     pending = record / 'result.pending.json'
-    args = [*settings['native_launcher_argv'], 'exec', '--json', '--output-last-message', str(pending),
-            '--model', profile['model'], '-c', f'model_reasoning_effort={json.dumps(profile["reasoning_effort"])}',
-            '-c', f'service_tier={json.dumps(profile["service_tier"])}',
-            '--sandbox', 'workspace-write', '-C', str(work), '-']
-    standard_native = len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex'
+    backend = backends.selected(settings)
+    standard_native = backend.standard
     resume_position = None
     role_instruction = job.get('native_role_instruction', ROLE_INSTRUCTIONS[job['role']])
     if job['role']=='A' and not job.get('formal_review'):
@@ -187,18 +183,15 @@ def run_native(root: Path, step: int, attempt=0):
     if job.get('formal_review'):
         from . import formal_review
         role_instruction=formal_review.public(root,job)['review']['instruction']
-    # Raw Codex is supported as a local soft-isolation entry. Existing qualified
-    # launchers retain their own exact argv/config protocol and MCP settings.
-    if standard_native:
-        args[-1:-1] = ['--skip-git-repo-check', '--output-schema', str(execution.origin(root, step) / 'science-result.schema.json'),
-                       '-c', 'project_doc_max_bytes=0',
-                       '-c', 'features.multi_agent=false', '-c', 'features.fast_mode=false',
-                       '-c', 'approval_policy="never"',
-                       '-c', 'developer_instructions=' + json.dumps(role_instruction)]
+    schema_path = execution.origin(root, step) / 'science-result.schema.json'
+    args = backend.launch(profile, work, pending, schema_path, role_instruction)
     if settings.get('resume_policy') is not None:
         from . import continuation
         continuation.validate_launcher(root)
     if attempt and intent.get('context_mode') != 'new_context':
+        if not backend.supports_resume:
+            from .continuation import ResumeUnavailable
+            raise ResumeUnavailable('worker_resume_unsupported_backend')
         from .contracts import regular
         continuation.validate_repair(root, step, intent)
         session = intent['session']
@@ -212,17 +205,7 @@ def run_native(root: Path, step: int, attempt=0):
         import hashlib
         if hashlib.sha256(header).hexdigest() != intent['session']['header_sha256']:
             raise ValueError('Original native session header changed')
-        # Global permissions/cwd/config remain before the resume subcommand;
-        # all turn output belongs exclusively to this accepted attempt.
-        configs = [item for index, item in enumerate(args)
-                   if index > len(settings['native_launcher_argv']) and args[index - 1] == '-c']
-        global_args = ['-C', str(work), '--sandbox', 'workspace-write']
-        for config in configs:global_args.extend(['-c', config])
-        if '--skip-git-repo-check' in args:global_args.append('--skip-git-repo-check')
-        resume_position = len(settings['native_launcher_argv']) + 1 + len(global_args)
-        args = [*settings['native_launcher_argv'], 'exec', *global_args, 'resume', '--json', '--model', profile['model'], '--output-schema',
-                str(execution.origin(root, step) / 'science-result.schema.json'),
-                '--output-last-message', str(pending), session['thread_id'], '-']
+        args, resume_position = backend.resume(args, profile, work, pending, schema_path, session)
     (work / 'artifacts').mkdir(exist_ok=True)
     (work / 'work').mkdir(exist_ok=True)
     budget = usage(root)
@@ -473,7 +456,7 @@ def run_native(root: Path, step: int, attempt=0):
     home.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
            'THIN_HWA_NATIVE_HOME': str(home), 'THIN_HWA_JOB_MANIFEST': str(job_path)}
-    if settings.get('resume_policy') is not None:env['CODEX_HOME'] = str(home)
+    if settings.get('resume_policy') is not None and backend.name == 'codex':env['CODEX_HOME'] = str(home)
     if startup is not None:
         env['CODEX_HOME'] = startup['native_home']
         args[0] = startup['native_program']['path']
@@ -498,12 +481,12 @@ def run_native(root: Path, step: int, attempt=0):
     terminal_usage_observed = False
     terminal_usage_missing = False
     terminal_meter = dict(meter)
-    live_meter = SessionUsage(meter_home, work, session=intent.get('session') if attempt and intent.get('context_mode') != 'new_context' else None)
+    live_meter = backend.meter(meter_home, work, session=intent.get('session') if attempt and intent.get('context_mode') != 'new_context' else None)
     cleanup = None
     thread_id = None
     scientific_lifetime = ExitStack()
     try:
-        with (record / 'native.jsonl').open('wb') as log, (record / 'native.stderr').open('wb') as err:
+        with (record / 'native.jsonl').open('wb') as log, (record / 'native.stderr').open('wb') as err, (record / 'native-public.jsonl').open('w') as public_log:
             # Submission happens here, after runner/watchdog startup. Recheck
             # all shared limits; this fresh intent alone is not missing usage.
             latest = usage(root)
@@ -530,7 +513,7 @@ def run_native(root: Path, step: int, attempt=0):
                 actual_home=Path(env.get('CODEX_HOME',str(Path.home()/'.codex')))
                 if not actual_home.is_absolute():actual_home=work/actual_home
                 args,launch=native_execution.prepare(root,step,record,work,actual_home.resolve(),args,
-                    standard=standard_native,resume_position=resume_position)
+                    standard=standard_native,resume_position=resume_position,native_options=settings.get('native_options'))
                 scientific_lifetime.enter_context(worker_execution_bridge.serve(
                     work/worker_execution_bridge.SUBMISSION_DIRECTORY,work/'work/experiment-config.json',work,
                     launch=launch))
@@ -538,7 +521,7 @@ def run_native(root: Path, step: int, attempt=0):
                                        stderr=err, env=env, start_new_session=True)
             process_id = runtime.process_identity(process.pid, execution.identity(root, step, attempt))
             write(record / "native-process.json", process_id)
-            process.stdin.write(prompt.encode())
+            process.stdin.write(backend.request(prompt, profile=profile, work=work, schema=schema_path))
             process.stdin.close()
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
@@ -561,12 +544,25 @@ def run_native(root: Path, step: int, attempt=0):
                                 continue
                             if not isinstance(event, dict):
                                 continue
-                            if event.get('type') == 'thread.started':
-                                thread_id = event.get('thread_id')
+                            for public_event in backend.public_events(event):
+                                # Text/tool publication needs the shared public
+                                # cleaner; never expose arbitrary native data.
+                                if public_event['type'] in {'session.started','turn.completed','usage'}:
+                                    public_log.write(json.dumps(public_event,ensure_ascii=False)+'\n')
+                                    public_log.flush()
+                            event = backend.event(event)
+                            if 'session' in event:
+                                thread_id = event['session']
                                 live_meter.bind_thread(thread_id)
-                            if event.get('type') == 'turn.completed':
+                            if 'live_usage' in event:
+                                live_meter.observe(event['live_usage'])
+                            if 'result' in event:
+                                if not isinstance(event['result'], dict) or pending.exists() or pending.is_symlink():
+                                    raise ValueError('Native protocol result is invalid or duplicated')
+                                write(pending,event['result'])
+                            if event.get('completed'):
                                 terminal_observed = True
-                            current = _usage_event(event)
+                            current = event.get('usage')
                             if current is not None:
                                 # exec turn.completed usage belongs to this turn.
                                 for key in terminal_meter:
@@ -574,7 +570,7 @@ def run_native(root: Path, step: int, attempt=0):
                                 terminal_usage_observed = True
                                 observed = True
                                 hint_dirty=True
-                            elif event.get('type') == 'turn.completed':
+                            elif event.get('completed'):
                                 terminal_usage_missing = True
                     observation = live_meter.poll()
                     projected = {key: max(terminal_meter[key], observation['tokens'][key]) for key in meter}
@@ -646,13 +642,13 @@ def run_native(root: Path, step: int, attempt=0):
         observation.update(live_coverage=observation['coverage'], live_reason=observation['reason'],
                            live_tokens=dict(observation['tokens']))
         if terminal_observed:
-            observation['source'] = 'turn.completed'
+            observation['source'] = backend.terminal_source
         if terminal_usage_observed and not terminal_usage_missing:
             mismatch = any(terminal_meter[key] < meter[key] for key in meter)
             if mismatch or live_meter.fault:
                 observation.update(coverage='unknown', reason=live_meter.fault or 'terminal_usage_below_live_observation')
             else:
-                observation.update(coverage='terminal', reason=None, source='turn.completed',
+                observation.update(coverage='terminal', reason=None, source=backend.terminal_source,
                                    reconciliation=('matched' if observation['tokens'] == terminal_meter else 'terminal_covers_live')
                                        if observation['has_observation'] else 'terminal_fallback',
                                    unreported_usage=None)
@@ -664,10 +660,9 @@ def run_native(root: Path, step: int, attempt=0):
         write(record / 'usage-observation.json', observation)
     outcome = dict(returncode=process.returncode if process else None,
           stop_reason=stop, usage=usage(root), thread_id=thread_id, cleanup=cleanup,
-          **(dict(native_identity=dict(home=str(meter_home), path=str(live_meter.path) if live_meter.path is not None else None,
-              participant_scope='codex_exec_single_agent_v1' if len(settings['native_launcher_argv'])==1
-              and Path(args[0]).name=='codex' and 'features.multi_agent=false' in args else 'unsupported'))
-             if settings.get('formal_review_policy') is not None else {}),
+          native_identity=backend.identity(live_meter, thread_id),
+          native_backend=backend.name,
+          native_permissions=backends.permission_summary(settings),
           metering=live_meter.snapshot() if process is None else observation,
           limitation='Observed token metadata only; running requests and reporting delay are unmeasured.')
     if final_return is not None:

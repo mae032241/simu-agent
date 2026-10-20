@@ -7,15 +7,18 @@ FIELDS = ('model', 'reasoning_effort', 'service_tier')
 
 def normalize(value, defaults):
     base = {key: defaults[key] for key in FIELDS}
-    if any(not isinstance(item, str) or not item.strip() for item in base.values()):
-        raise ValueError('Explicit model, reasoning effort and service tier are required')
+    if (not isinstance(base['model'], str) or not base['model'].strip()
+            or any(item is not None and (not isinstance(item, str) or not item.strip())
+                   for key,item in base.items() if key!='model')):
+        raise ValueError('A model and valid optional reasoning effort and service tier are required')
     if not isinstance(value, dict) or set(value) - set(ROLES):
         raise ValueError('Role profiles must name only H, W, A or E')
     result = {}
     for role in ROLES:
         override = value.get(role, {})
         if (not isinstance(override, dict) or set(override) - set(FIELDS)
-                or any(not isinstance(item, str) or not item.strip() for item in override.values())):
+                or any(not (item is None and key!='model' and base[key] is None)
+                       and (not isinstance(item, str) or not item.strip()) for key,item in override.items())):
             raise ValueError('Role profile fields must be nonempty model, reasoning_effort or service_tier strings')
         result[role] = {**base, **override}
     return result

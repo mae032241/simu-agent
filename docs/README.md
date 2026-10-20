@@ -1,6 +1,6 @@
 # SciDiscovery 文档 / Documentation
 
-当前应用由 `scid-research`、`scid-experiment` 与显式启动的实例 UI 提供。
+当前应用以 `scid-research`、`scid-experiment` 为核心，实例 UI 是复用同一逻辑的可选入口。
 科学 Worker 负责结论，控制层负责精确身份、冻结输入、预算和授权。
 Current references describe the supported commands, reusable contracts and their limits.
 
@@ -8,6 +8,7 @@ Current references describe the supported commands, reusable contracts and their
 | --- | --- |
 | 开始使用 / Getting started | [中文 README](../README.zh-CN.md) · [English README](../README.md) |
 | 运行、结果、批准与恢复 / CLI, results, approval and recovery | [CLI 指南](ROOTLESS_CLI.zh-CN.md) |
+| 统一配置与后端 / Configuration and backends | [Reference / 中英参考](RESEARCH_CONFIGURATION.md) · [TOML example](../research.example.toml) |
 | 控制层架构 / Architecture | [中文](ARCHITECTURE.zh-CN.md) · [English](ARCHITECTURE.md) |
 | 安装与卸载 / Installation | [中文](INSTALL.zh-CN.md) · [English](INSTALL.md) |
 | 发布与验证范围 / Publication and validation scope | [中文](RELEASE.zh-CN.md) · [English](RELEASE.md) |

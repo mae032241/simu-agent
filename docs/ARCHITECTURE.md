@@ -7,6 +7,14 @@ There is no LLM Root, MCP scheduling service or background Root daemon.
 The core exposes the thin CLI and instance UI; the old CLI/MCP/UI, Root host,
 platform-profile generator and legacy systemd deployment are retired.
 
+`research_config.py` owns the shared TOML, CLI and host preparation, defaulting and validation path. New instances freeze effective settings; editing a declaration does not amend an existing instance. `backends.py` separates Codex and explicit protocol transport from scientific judgment, budgets and execution authority. Protocol permissions are launcher hints, not isolation; native resume and complete authorship attestation are unsupported, so formal independent review is unavailable. Enabling subagents also establishes neither complete authorship nor complete usage. See the [configuration and backend reference](RESEARCH_CONFIGURATION.md).
+
+Frozen permission summaries distinguish requested and effective policy, enforcement and limitations. Standard Codex danger-full-access cannot enforce offline intent; read-only remains offline despite a network request. Protocol/custom-launcher access remains unknown with hint-only declarations.
+
+The CLI is the application core; the optional webpage uses the same public controls and read views. `control_operations.py` records durable detached advancement and scientific budget amendments. The independent controller retains the original writer lock and survives webpage service exit. Pause prevents the next node while accepted work finishes under original limits. Amendments apply at safe boundaries without resetting consumption or unknown usage; unknown original calls require reconciliation, never automatic resubmission.
+
+`user_guidance.py` binds global or role-specific advice to the next matching new task or subsequent research. Pending revisions can be edited/revoked; applied task inputs are immutable, with future research revocation recorded separately. Advice may be declined. Explicit goal changes preserve the original objective record and name an effective node; they grant no execution permission or scientific qualification.
+
 ## Ownership and flow
 
 ```text
@@ -211,6 +219,8 @@ All listed files are in `src/scidiscovery/research_loop/` unless stated otherwis
 | Responsibility | Owner |
 | --- | --- |
 | Preparation, routing, pause | `controller.py`, `runtime.py`, `instance_control.py` |
+| Unified configuration and backends | `research_config.py`, `backends.py` |
+| Detached control and user direction | `control_operations.py`, `user_guidance.py` |
 | Native work, continuation, usage | `native.py`, `execution.py`, `continuation.py` |
 | Scientific contracts and originals | `contracts.py`, `semantic.py`, `instance_science.py` |
 | Candidates and delivery | `selection.py`, `delivery.py`, `worker_delivery.py` |
@@ -378,6 +388,7 @@ name to decide scientific behavior. Schema shape, declared scientific semantics
 and validation must agree; engineering failures must not be disguised as scientific
 rejection or an invitation to retry. Bounds and failure evidence survive recovery.
 Read views and UI render the same sealed scientific bytes without rewriting them.
+CLI result/materials/artifact and the webpage use the same exact-original API; downloads refuse existing destinations. Webpage configuration, explicit instance choices, queued budget changes and guidance use public interfaces and never infer an instance by discovery or recency.
 
 ## Support and qualification
 

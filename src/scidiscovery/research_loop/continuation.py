@@ -39,6 +39,9 @@ def policy(value, launcher):
 
 
 def validate_launcher(root):
+    from . import backends
+    if not backends.selected(c.settings(root)).supports_resume:
+        raise ResumeUnavailable('worker_resume_unsupported_backend')
     limits = c.settings(root).get('resume_policy')
     if limits is None:raise ResumeUnavailable('worker_resume_unsupported')
     for proof in limits['launcher_files']:
@@ -72,6 +75,9 @@ def validate_session_header(line, thread, workspace):
 
 
 def session(root, step, record, *, home=None, session_path=None, identity_proof=False):
+    from . import backends
+    if not backends.selected(c.settings(root)).supports_resume:
+        raise ResumeUnavailable('worker_resume_unsupported_backend')
     outcome = c.read(c.regular(record / 'native-outcome.json'))
     thread = outcome.get('thread_id')
     try:
@@ -137,7 +143,7 @@ def seal_or_repair(root, step):
             saved = checkpoint.validate(root, job, record)
             outcome = c.read(c.regular(record / 'native-outcome.json'))
             if (outcome.get('returncode') == 0 and not outcome.get('stop_reason')
-                    and (not outcome['usage']['unknown_steps'] or budget.native_completion_known(outcome))):
+                    and (not outcome['usage']['unknown_steps'] or budget.native_completion_known(outcome, c.settings(root)))):
                 if saved['science']['status'] != 'present':
                     # c.seal_result provides the bound output diagnosis/repair.
                     return c.seal_result(root, step)
@@ -188,7 +194,7 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
     outcome = c.read(c.regular(record / 'native-outcome.json'))
     if (type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
             or outcome.get('stop_reason')
-            or outcome['usage']['unknown_steps'] and not budget.native_completion_known(outcome)):
+            or outcome['usage']['unknown_steps'] and not budget.native_completion_known(outcome, c.settings(root))):
         raise ValueError('Output repair requires a known completed original turn')
     raw = record / 'science-output.json'
     if outcome.get('output_status') == 'missing':
@@ -255,7 +261,7 @@ def validate_fragment_chain(root, step, chain):
         science = c.science_payload(prior / 'science-output.json', 'W', job.get('handoff_protocol', 1))
         if (saved['science']['status'] != 'present' or science.get('stage_intent') != 'continue'
                 or original.get('returncode') != 0 or original.get('stop_reason')
-                or original['usage']['unknown_steps'] and not budget.native_completion_known(original)):
+                or original['usage']['unknown_steps'] and not budget.native_completion_known(original, c.settings(root))):
             raise ValueError('Fragment continuation has no qualified original continuing turn')
         mode = intent.get('context_mode')
         if mode != checkpoint.policy(c.settings(root)['worker_fragment_policy'])['context']:
@@ -285,7 +291,7 @@ def _eligible_original(root, step, paths, *, successful=False, wait_runner=False
     meter = c.read(c.regular(last / 'usage.json')) if (last/'usage.json').exists() else None
     if meter is not None and native._usage_event(dict(type='turn.completed', usage=meter)) != meter:
         raise ResumeUnavailable('worker_resume_usage_unknown')
-    if meter is None and not budget.native_completion_known(outcome):
+    if meter is None and not budget.native_completion_known(outcome, c.settings(root)):
         raise ResumeUnavailable('worker_resume_terminal_ineligible')
     binding = execution.identity(root, step, len(paths) - 1)
     for name in ('runner-process.json', 'native-process.json'):

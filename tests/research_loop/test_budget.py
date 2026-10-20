@@ -103,8 +103,13 @@ def test_budget_amend_is_audited_and_preserves_consumption_and_settings(clocked,
     assert main(['budget-amend', '--root', str(root), '--max-tokens', '200', '--max-seconds', '30',
                  '--authorization-note', 'Operator authorizes this explicit ceiling.']) == 0
     result = json.loads(capsys.readouterr().out)
-    assert result['authorization'] == 'operator_declaration_not_authentication'
-    assert result['consumption'] == 'retained'
+    assert result['status'] == 'applied'
+    assert result['kind'] == 'budget_amend'
+    assert result == contracts.read(root / 'host-control/operations' / f'{result["operation_id"]}.json')
+    amendment = result['result']
+    assert amendment['status'] == 'budget_amended'
+    assert amendment['authorization'] == 'operator_declaration_not_authentication'
+    assert amendment['consumption'] == 'retained'
     value = budget.snapshot(root)
     assert value['advance_seconds'] == 8
     assert value['max_tokens'] == 200
@@ -112,6 +117,8 @@ def test_budget_amend_is_audited_and_preserves_consumption_and_settings(clocked,
     assert (root / 'settings.json').read_bytes() == frozen
     events, _ = budget._events(root, contracts.settings(root))
     assert [item['seq'] for item in events] == [1, 2, 3]
+    assert amendment['amendment_seq'] == events[2]['seq']
+    assert events[2]['operation_id'] == result['operation_id']
     assert events[2]['parent_sha256'] == contracts.digest(root / 'control-ledger/000002.json')
     assert events[2]['before'] == dict(max_tokens=100, max_seconds=20)
     assert events[2]['after'] == dict(max_tokens=200, max_seconds=30)
@@ -385,7 +392,11 @@ def test_legacy_elapsed_instance_retains_its_original_deadline(clocked):
     assert value['seconds_remaining'] == 0
     assert value['unclassified_seconds'] == 5
     assert value['paused_seconds'] == 25
-    assert controller.run(root)['status'] == 'wall_limit'
+    # Elapsed clock accounting does not remove this fresh fixture's protected
+    # final A contract. Inspect admission without dispatching that final task.
+    assert settings['final_a_completion_policy'] == {'version': 1}
+    assert controller._launch_limit(root, settings) == 'wall_limit'
+    assert not (root / 'jobs').exists()
 
 
 @pytest.mark.parametrize('action', ['snapshot', 'transition', 'amend'])

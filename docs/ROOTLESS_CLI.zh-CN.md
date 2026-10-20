@@ -1,7 +1,7 @@
 # 无 Root 的科研 CLI
 
 `scid-research` 直接启动新的 H/W/A/证据原生线程；控制程序执行科学角色选择的路由。
-控制程序拥有原件绑定、预算和执行权限，H/W/A/E 拥有科学判断。实例 UI 复用原实例状态；来源声明、正式审查和执行授权按准备配置启用。当前能力与资格边界见[架构](ARCHITECTURE.zh-CN.md)和[TCAD 资格](TCAD_QUALIFICATION_STATUS.zh-CN.md)。
+控制程序拥有原件绑定、预算和执行权限，H/W/A/E 拥有科学判断。CLI 是应用核心，实例 UI 是复用原实例状态与公共逻辑的可选入口；来源声明、正式审查和执行授权按准备配置启用。当前能力与资格边界见[架构](ARCHITECTURE.zh-CN.md)和[TCAD 资格](TCAD_QUALIFICATION_STATUS.zh-CN.md)。
 
 ## 安装入口
 
@@ -21,6 +21,19 @@ MCP/Root 角色、systemd 服务或默认实例。已有 site 或任一薄 wrapp
 
 ## 创建与运行
 
+推荐通过单一 TOML 声明准备新实例，路径相对该文件解析：
+
+```sh
+scid-research config-check --config /absolute/project/research.toml
+scid-research config-inspect --config /absolute/project/research.toml
+scid-research prepare --config /absolute/project/research.toml
+scid-research config-inspect --root /absolute/project/research-instance
+scid-research start --root /absolute/project/research-instance
+scid-research operations --root /absolute/project/research-instance
+```
+
+复制 [research.example.toml](../research.example.toml)，完整字段、凭据分离与 protocol 后端限制见[配置参考](RESEARCH_CONFIGURATION.md)。`config-check` 不建实例或提交模型；inspect 输出可能含宿主私有路径。`--config` 不能混入准备参数，修改 TOML 不改变已有实例。显式参数方式使用相同默认值与校验：
+
 ```sh
 scid-research prepare \
   --root /absolute/path/new-instance \
@@ -32,7 +45,7 @@ scid-research run --root /absolute/path/new-instance
 ```
 
 可重复传入 `--user-update /path/to/statement.md`，将用户补充和原始目标一起冻结。
-本版尚不支持实例运行中追加补充。默认 `gpt-6.1-sol`、`high`、`default` 服务档位。
+运行中可通过下述 guidance 命令追加面向未来任务的用户方向；已冻结输入不改写。Codex 默认 `gpt-6.1-sol`、`high`、`default` 服务档位。
 预算示例不保证完成一轮；三节点允许典型 H→W→A，但科学角色也可以选择证据提取或等待。
 源码入口为 `PYTHONPATH=src python -m scidiscovery.research_loop.cli`。
 
@@ -49,6 +62,53 @@ scid-research run --root /absolute/path/new-instance
 rootless cov launcher 的 operator 配置应声明相同全局值与 `role_profiles`（可为等价的稀疏配置）；它核对冻结实例，再生成匹配的 CODEX_HOME 配置，拒绝不一致的 model/effort/tier 参数。
 这些记录证明请求参数一致，不代替服务端实际模型或计费观测。
 
+## 后台推进与用户方向
+
+`start --root ...` 后台启动或连接原实例控制进程，返回持久 `operation_id`；
+`start --continue --root ...` 显式清除下一节点暂停再推进；`start --resume-step N --root ...`
+后台恢复精确已知故障 job，仍检查原冻结续接门槛，不与 continue 合用。`run`、`continue` 是前台方式。
+`operations --root ... --operation-id ID` 查看原操作回执，进程失踪须核对原调用，不自动重发。
+`pause` 只阻止下一节点，不立即杀死已接受工作。
+
+```sh
+scid-research guidance-submit --root /absolute/instance --target W --scope next \
+  --text '优先说明已有证据中尚未区分的机制。'
+scid-research guidance-list --root /absolute/instance
+scid-research guidance-edit --root /absolute/instance --guidance-id ID \
+  --expected-revision 1 --text '先比较已有证据，再决定是否需要新实验。'
+scid-research guidance-revoke --root /absolute/instance --guidance-id ID --expected-revision 2
+```
+
+`--target` 支持 global/H/W/A/E；`--scope next` 面向下一匹配新任务，research 面向后续匹配任务。
+默认 advice 为可不采纳的科学建议；目标变更必须显式 `--kind goal_change --target global --effective-step N`，
+自动采用 research 范围并保留原目标记录。待应用项须按当前 revision 修改/撤销；已应用任务输入
+不改写，research 项可追加仅未来生效的撤销回执。建议不授结论、独审资格、预算或执行权限。
+
+## 当前进度与封存结果
+
+```sh
+scid-research progress --root /absolute/instance --step 2 --attempt 0 --limit-bytes 65536
+```
+
+续读时传上次返回的 `--cursor`；`--limit-bytes` 支持 1024–262144。进度只展示后端明确
+公开的消息、工具名及状态、用量等有界类型化内容；草稿/日志与封存科学结果分开，不提供
+私有推理、完整参数、原生 session 或 stderr。`stream_state` 可为 ready、partial_line、
+missing、truncated、replaced、unavailable；截断或替换后须显式省略 cursor 重新读取。
+当前节点、草稿和控制进程结束均不代表科学目标已完成；以 A 的目标覆盖、证据缺口、明确
+交付选择和原操作回执判断实际结果。
+
+无需网页即可读取精确封存科学原文与成果：
+
+```sh
+scid-research result --root /absolute/instance --step 3 > result.json
+scid-research materials --root /absolute/instance --step 3 --after 0 --limit 20
+scid-research artifact --root /absolute/instance --step 3 --index 1 --output ./model.bin
+```
+
+`result` 向 stdout 输出原科学 JSON 字节，不包元数据；`materials` 默认每页20项，limit 支持1–100，
+`artifact` 使用该页精确成员 index，核对原件并拒绝覆盖已有目标。三者与网页复用同一精确读取 API，
+不启动模型或提供科学资格。
+
 ## 插件选择与实例管理
 
 `prepare --execution-config /path/config.json` 显式选择已注册执行器，配置形状为 `{"executor":"plugin:binding","configuration":{...}}`。仅用于宿主配置的 `--experiment-mode local`；这里 local 表示配置归属，不表示只支持本机计算。不传时沿用默认本地执行器。公开配置不接受控制层 scope、预算、原件身份或凭据；能力和实现身份随实例冻结。
@@ -56,11 +116,32 @@ rootless cov launcher 的 operator 配置应声明相同全局值与 `role_profi
 实例页面复用同一控制状态：
 
 ```sh
+scid-research serve-ui --workspace /absolute/path/workspace \
+  --approval-secret-file /absolute/path/operator-owned.key --port 8123
+
 scid-research serve-ui --root /absolute/path/instance \
-  --approval-secret-file /absolute/path/operator-owned.key
+  --approval-secret-file /absolute/path/operator-owned.key \
+  --instance-root /absolute/path/another-instance
 ```
 
-密钥由操作者提供，须为现有普通文件、权限0600且至少32字节。命令监听 loopback 并输出独立只读/管理链接，重启后旧浏览凭据失效。普通本地实例无需启用正式审查或执行审批，也能查看节点状态、请求暂停和继续。暂停只阻止下一节点；已接受工作继续完成。继续复用原实例写锁，服务只允许一个进行中的推进请求。页面提供实例状态、精确封存科学原文和成果入口，不提供任意路径或完整私有会话读取。
+尚未创建研究实例时，用 `--workspace` 指定已有目录即可打开独立研究工作台。
+“新建研究实例”直接填写任务正文、实例目录、材料目录、模型和有限总预算，其他参数在分组表单中修改。
+也可明确选择 TOML 导入；首页和新建页不会读取或选择工作区的 `research.toml`。配置文件不是必填项。
+表单可单独保存或导出配置；检查后展示最终生效配置，再确认创建。仅本次创建使用的修改不会回写导入文件。
+创建不调用模型，进入实例后须单独点击“开始研究”。“加载已有实例”按精确目录打开既有研究。
+workspace 本身没有科学身份、预算或启动/恢复控件；准备新实例仍须显式给齐预算等必要输入。
+`--root` 与 `--workspace` 二选一，既有 `--root` 用法保持不变。
+
+密钥由操作者提供，须为现有普通文件、权限0600且至少32字节。命令监听 loopback 并输出独立只读/管理链接，重启后旧浏览凭据失效。普通本地实例无需启用正式审查或执行审批，也能查看节点状态、请求暂停和继续。暂停只阻止下一节点；已接受工作继续完成。继续复用原实例写锁，推进由 detached 控制进程拥有；关闭网页服务不停止已接受推进。页面提供实例状态、精确封存科学原文和成果入口，不提供任意路径或完整私有会话读取。
+
+`--instance-root` 可重复传入其它明确实例，管理页也可按精确已有根打开；不扫描目录、不按最近时间选择。
+`/configuration` 使用相同结构化表单，支持可选配置导入、保存、导出、检查及新实例准备。
+导入文件目录决定相对路径基准；配置校验及准备复用 CLI API，改声明不改冻结实例。网页复用预算排队、用户方向、操作回执、后台
+启动/恢复与有界进度，无需网页也能用对应 CLI 入口。配置显示 requested/effective/enforcement 与
+limitations：标准 Codex danger-full-access 不实施离线要求，read-only 即使请求联网仍离线，
+protocol/自定义 launcher 权限为 hint_only、实际访问未知；详见[配置参考](RESEARCH_CONFIGURATION.md)。
+
+工作台已加载列表、实例总览、用量、当前阶段和最新结论通过同源 SSE 自动同步；断线后自动重连并读取完整状态，不刷新整页，也不清空正在填写的配置、预算或方向建议。`/progress` 自动跟随当前节点；`/nodes/<step>/progress?attempt=N` 固定查看指定历史节点，公开输出仍用原有有界、不透明游标增量读取。等待结论会显示等待原因；普通 A 的 `wait` 可由管理者明确点击“继续研究”请求重新决策，网页不会自动重试。
 
 `/results?after=N` 每页列20个封存节点，`/results/<step>` 显示精确结果；原科学 JSON 与附件入口保留。候选事实展示使用该节点输入时冻结的候选摘要；本节点 A 推荐为 null 时不回填旧推荐。HTML/SVG 成果仍下载，不内嵌执行。
 
@@ -394,15 +475,16 @@ A 仍须给出结论和限制，host 明确输出未提交及原因。
 未知外部操作先按原调用核对；阈值降低或提高后仍不足，不恢复、不重复最终 A。之后再次耗尽共享额度，
 进入新的 FINAL 周期，各周期只运行一次最终 A。没有待恢复 normal 路由的主动 closeout 保持终态。
 
-`pause` 只阻止下一节点，已经接受的任务继续计时并按原上限执行。运行中或未知执行不允许
-`budget-amend`；合法终态后的总额修订不修改既有节点策略、锚点或终态消费报告。
+`pause` 只阻止下一节点，已经接受的任务继续计时并按原上限执行。科学 `budget-amend` 返回
+持久操作回执，可先排队并在下一新任务前的安全边界应用；accepted 不等于已应用。运行中/未知
+原调用不因修订而获重发资格。累计消费、未知用量、既有节点策略、锚点和终态消费报告均保留。
 protected FINAL 不增加普通探索额度；外部交付仍需显式配置。节点停止不代表已交 A、已交付或科学目标完成，
 也不保证剩余额度足够完成后续节点。
 
 ## 启动边界
 
 launcher 使用 argv，不拼接 shell。可复用经过验证的外部隔离启动器，但须适配上述目录和私有 schema。
-直接 `codex` 是软隔离：关闭项目 AGENTS 自动加载、native 子 Agent 和 fast；框架不再注入退役 MCP 配置，fresh minimal `CODEX_HOME` 无 MCP 条目，保留用户自己声明的原生功能、工具与权限。
+Codex 后端是软边界：关闭项目 AGENTS 自动加载，默认关闭 native 子 Agent 和 fast，按冻结声明投影模型与权限。可显式声明 subagents 或 fast，但不因此取得完整作者、用量或正式独审资格。认证保留在原 home，无需手改用户配置；显式运行设置忽略用户配置覆盖。框架不注入退役 MCP 配置。protocol 后端由 launcher 实施权限，不强制套用 Codex 目录 sandbox；不支持原线程恢复或完整作者证明。
 当前执行审批信任 Worker 及其本地进程：HMAC、精确调用绑定、有效期和预算用于防误操作与状态混淆，不阻止同权限进程读取密钥或伪造批准。密钥路径不显示、0600或另起同用户进程均不构成强隔离。需要防恶意 Worker 的部署仍须单独建立真实权限边界。
 其他配置仍可能继承本机环境；涉及隐藏基准资料应使用已经验证的隔离启动器。
 注册功能插件与 CLI 实例 UI/端口已接入，旧入口已退役。支持上文限定的同宿主冷 checkpoint 恢复；跨宿主完整灾备仍不支持。未知原生结果须核对原调用，不能自动重放。

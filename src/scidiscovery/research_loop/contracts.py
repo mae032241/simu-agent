@@ -560,9 +560,9 @@ def _role_lineage(job):
 
 
 def science_view(job, root=None):
-    from . import formal_review
+    from . import formal_review, user_guidance
     if job.get('formal_review'):
-        return formal_review.public(root,job)
+        return dict(formal_review.public(root,job), **user_guidance.public(job))
     protocol = job.get('handoff_protocol', 1)
     context = job.get('decision_context')
     question = job['instruction']
@@ -620,6 +620,7 @@ def science_view(job, root=None):
     from . import engineering
     view = {key: value for key, value in {
         'role': job['role'], 'question': question,
+        **user_guidance.public(job),
         **(dict(scientific_judgment=AUTHOR_EVIDENCE_GUIDANCE) if job['role']=='A' and not job.get('formal_review') else {}),
         **(dict(formal_review_capability=dict(enabled=True,
             choices=formal_review.public_choices(root,job),
@@ -1066,14 +1067,18 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['source_restrictions'] = qualification.status(root, job)
     from . import execution_authority
     execution_authority.bind_job(root, job)
-    for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
-                        (work / 'science-task.json', science_view(job, root)),
-                        (host_record(work) / 'science-result.schema.json', result_schema(role, protocol, 'selection' in job,**response_options(job)))):
-        if path.exists():
-            if read(regular(path)) != value:
-                raise ValueError('Frozen scientific task changed')
-        else:
-            write(path, value)
+    from . import user_guidance
+    with user_guidance.binding(root, step, role, retained) as statements:
+        if statements:
+            job['user_guidance'] = statements
+        for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
+                            (work / 'science-task.json', science_view(job, root)),
+                            (host_record(work) / 'science-result.schema.json', result_schema(role, protocol, 'selection' in job,**response_options(job)))):
+            if path.exists():
+                if read(regular(path)) != value:
+                    raise ValueError('Frozen scientific task changed')
+            else:
+                write(path, value)
     return job
 
 
@@ -1326,7 +1331,7 @@ def seal_result(root: Path, step: int):
     final = budget.final_a_return(root, job, intent)
     if (type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
             or outcome.get('stop_reason') and accepted is None
-            or budget.final_a_usage_unknown(final, outcome['usage']) and not budget.native_completion_known(outcome)):
+            or budget.final_a_usage_unknown(final, outcome['usage']) and not budget.native_completion_known(outcome, settings(root))):
         raise ValueError('Terminal scientific output is unverified or changed')
     if native_record!=execution.origin(root,step):
         from . import author_closeout

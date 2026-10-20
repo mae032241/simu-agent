@@ -2,8 +2,8 @@
 
 简体中文 | [English](README.md)
 
-SciDiscovery 是面向 Codex 的科研框架。它围绕明确目标与冻结输入运行原生 H/W/A/E
-线程，提供有限共享预算、科学结果封存及原调用恢复。科学 Worker 负责模型选择与结论；
+SciDiscovery 是以 CLI 为核心、提供 Codex 与显式 Agent 协议后端的科研框架。
+它围绕明确目标与冻结输入运行 H/W/A/E 线程，提供有限共享预算、科学结果封存及原调用恢复。科学 Worker 负责模型选择与结论；
 确定性控制负责身份、输入绑定、资格校验、预算和执行权限。
 
 候选指标、审计回执和可用性供科学作者判断。控制保留观察顺序和全部候选；A 必须明确命名
@@ -19,7 +19,8 @@ SciDiscovery 是面向 Codex 的科研框架。它围绕明确目标与冻结输
 | 入口 | 用途 |
 | --- | --- |
 | `scid-research` | 准备实例，运行、查看、暂停和继续研究，收束并导出结果。 |
-| `scid-research serve-ui` | 显式启动一个实例的页面，提供实例控制和封存结果分页。 |
+| `scid-research start` | 为明确实例启动或连接 detached 控制进程。 |
+| `scid-research serve-ui` | 同一实例的可选网页，提供实例控制和封存结果分页。 |
 | `scid-research archive-*` / `checkpoint-*` | 导出和核验原件、恢复指定材料，或执行限定的同宿主冷迁移。 |
 | `scid-experiment` | 使用受管本地实验或声明的领域执行接口。 |
 
@@ -40,14 +41,18 @@ scid-research --help
 安装发布 `scid-research`、`scid-experiment`，要求使用新安装前缀。通过 `SCID_PLUGINS`
 明确选择可选插件；依赖、路径设置与卸载见[安装指南](docs/INSTALL.zh-CN.md)。
 
-开始研究时，为新实例提供目标文件、公开输入、明确的原生 launcher，以及有限的 token、
-时间和步数上限，再运行和查看该精确实例。[CLI 指南](docs/ROOTLESS_CLI.zh-CN.md)
+开始研究时，复制 [research.example.toml](research.example.toml)，声明目标、公开输入、后端权限及有限预算，
+依次运行 `scid-research config-check --config research.toml` 和 `scid-research prepare --config research.toml`。
+再以 `config-inspect --root /absolute/instance` 查看冻结设置，`start --root /absolute/instance` 后台推进。
+配置文件只影响新实例；已有实例保留冻结设置，详见[配置与后端参考](docs/RESEARCH_CONFIGURATION.md)。
+网页是复用同一状态与控制逻辑的可选入口；网页服务退出不会停止 detached 研究。
+`result`、`materials`、`artifact` 可通过 CLI 读取或下载精确封存结果。[CLI 指南](docs/ROOTLESS_CLI.zh-CN.md)
 包含命令、策略示例、结果读取与恢复规则。单项 `codex` launcher 默认使用本地实验；W
 运行期间由原生宿主自动处理普通文件提交并返回响应。受管本地命令需要受支持的原生权限投影，
 前提及明确不支持的情形见 CLI 指南。external 执行仍由声明的 launcher 负责。
 执行另需冻结配置及授权；科研预算、独立审查和用户陈述均不授予执行权限。
 
-H/W/A/E 单节点 token 预算统一为软目标：触线时提示收口，W 新实验须先交 A review，原节点可以完成原结果。实际 input+output 完整记账，不预付整个节点 token 额度。当前协议 23 仅接受 soft 节点设置；旧实例只读，冻结设置不改写。单次执行的有限时间、权限与清理限制仍有效。
+H/W/A/E 单节点 token 预算统一为软目标：触线时提示收口，不仅因达线拒绝新受管实验或强制转 A，原节点可以完成原结果。实际 input+output 完整记账，不预付整个节点 token 额度。当前协议 23 仅接受 soft 节点设置；旧实例只读，冻结设置不改写。单次执行的有限时间、权限与清理限制仍有效。
 
 新实例冻结一次最终 A 完成策略：共享 token、总时间或步数预算不足、为零或已经超出，
 均不据此拒绝最终 A 的进入、完成及其自身明确授权的交付。仅计费用量缺失或未对齐也不阻挡
@@ -89,7 +94,8 @@ Worker 写普通科学文件，使用薄实验提交与等待接口。其提示�
 当前信任 Worker 与宿主同权限进程，控制层属于软边界。浏览器、真实原生线程续接、TCAD
 solver 和实际掉电恢复需要精确候选及环境的证据；源码测试不能建立这些资格。
 默认受管本地子进程及显式 science launcher 提供各自声明的文件视图，不对泛原生执行
-承诺统一物理隔离；网络权限继承所选冻结原生权限。
+承诺统一物理隔离。权限摘要分别记录请求值、实际策略与实施方式；不受限 Codex 不能强制离线，
+protocol launcher 的实际访问保持未知，详见[配置参考](docs/RESEARCH_CONFIGURATION.md)。
 跨宿主完整灾备不在支持范围。冻结实例保留原实现身份；未知外部提交须先按原调用身份核对。
 
 受支持的应用入口为上述两个命令。旧 `scid`、Root/MCP 应用、平台角色生成及 legacy systemd
