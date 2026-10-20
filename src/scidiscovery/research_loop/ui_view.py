@@ -123,10 +123,13 @@ def direction_sense(direction):
     """Only an explicit author declaration selects max/min; otherwise unknown."""
     if not isinstance(direction, str):
         return None
-    text = direction.strip().lower()
-    if re.match(r'^(max|maximi[sz]e)\b', text) or re.search(r'\b(higher|larger|greater|bigger)\b', text):
+    text = ' '.join(direction.lower().split()).removesuffix('.')
+    if text in {'max', 'maximize', 'maximise', 'higher', 'larger', 'greater', 'bigger',
+                'higher is better', 'higher values are better', 'larger is better',
+                'greater is better', 'bigger is better'}:
         return 'max'
-    if re.match(r'^(min|minimi[sz]e)\b', text) or re.search(r'\b(lower|smaller|less)\b', text):
+    if text in {'min', 'minimize', 'minimise', 'lower', 'smaller', 'less',
+                'lower is better', 'lower values are better', 'smaller is better', 'less is better'}:
         return 'min'
     return None
 
@@ -200,11 +203,14 @@ class Reader:
 
     def node(self, step):
         if step not in self._nodes:
+            # Execution references can depend on recovery and continuation
+            # originals outside the node. Keep their canonical verification on
+            # every snapshot; only memoize the potentially large raw document.
+            _, seal, raw, proof = science._sealed(self.root, step)
             remembered = self._remembered(('node', step), ())
             if remembered is not None:
                 self._nodes[step] = remembered
                 return remembered
-            _, seal, raw, proof = science._sealed(self.root, step)
             job_path = self.root / 'jobs' / f'{step:03d}.json'
             job = science._json(job_path, science._proof(job_path, seal['job_sha256']))
             with science.Original(raw, proof) as original:
@@ -213,7 +219,8 @@ class Reader:
             if not isinstance(payload, dict):
                 raise ValueError('Sealed scientific output is not an object')
             self._nodes[step] = dict(job=job, payload=payload, seal=seal)
-            self._remember(('node', step), (execution.origin(self.root, step) / 'result-identity.json', job_path, Path(raw)),
+            self._remember(('node', step), (execution.origin(self.root, step) / 'result-identity.json',
+                           execution.origin(self.root, step) / 'result.json', job_path, Path(raw)),
                            self._nodes[step])
         return self._nodes[step]
 
@@ -247,6 +254,7 @@ class Reader:
 def clean_row(row, clean):
     """Observer candidate facts with author text passed through the public cleaner."""
     value = dict(row)
+    value['evaluation_identity'] = row.get('evaluation_key')
     for key, limit in (('label', 300), ('evaluation_key', 300), ('direction', 200), ('status', 60)):
         if isinstance(value.get(key), str):
             value[key] = clean(value[key], limit)
@@ -270,6 +278,10 @@ def resolve_candidate(root, job, value, references=None, *, strict=False):
     from . import candidate_refs
     try:
         resolved = candidate_refs.resolve_reference(root, job, value)
+        if re.fullmatch(r'[HWAE]\d{3,}-I\d{3,}', resolved):
+            resolved = candidate_refs.control_payload(job, {'candidate_recommendation': value}, root=root)['candidate_recommendation']
+            if strict and re.fullmatch(r'[HWAE]\d{3,}-I\d{3,}', resolved):
+                raise ValueError('Implementation has no unique frozen candidate binding')
     except ValueError:
         if strict:
             raise
@@ -326,16 +338,18 @@ def _links(node, sealed, materials=None):
 
 def _candidate_extreme(rows):
     """Within one evaluation_key only; author-declared direction decides max/min."""
-    keys = list(dict.fromkeys(row.get('evaluation_key') for row in rows))
+    keys = list(dict.fromkeys(row.get('evaluation_identity', row.get('evaluation_key')) for row in rows))
     numeric = [row for row in rows if isinstance(row.get('metric'), (int, float)) and not isinstance(row.get('metric'), bool)
                and math.isfinite(row['metric'])]
     if not rows:
         return None
     if len(keys) > 1:
         return dict(text='多种口径，见候选表', title=EXTREME_TOOLTIP)
+    if keys[0] is None or not isinstance(keys[0], str) or not keys[0].strip():
+        return dict(text='口径未声明，无法比较', title=EXTREME_TOOLTIP)
     if not numeric:
         return dict(text='无数值指标', title=EXTREME_TOOLTIP)
-    key = keys[0] if keys[0] is not None else '未声明口径'
+    key = rows[0].get('evaluation_key')
     senses = {direction_sense(row.get('direction')) for row in numeric}
     sense = senses.pop() if len(senses) == 1 else None
     values = [row['metric'] for row in numeric]
@@ -427,7 +441,12 @@ def role_line(reader, node, clean, *, mechanisms=None, labels=None, references=N
                                   + (' · ' + clean(str(focus['action']), 60) if focus.get('action') else '')))
         if line['kind'] != 'formal_review' and 'candidate_recommendation' in payload:
             value = payload.get('candidate_recommendation')
-            if value is None:
+            if action == 'audit':
+                identity = resolve_candidate(reader.root, job, value, references)
+                line['audit_target'] = identity
+                label = (labels or {}).get(identity)
+                facts.append(dict(label='审计对象', value=clean(label or str(value), 300) if value is not None else '未指定'))
+            elif value is None:
                 facts.append(dict(label='候选推荐', value='未推荐'))
             else:
                 identity = resolve_candidate(reader.root, job, value, references)
@@ -588,10 +607,10 @@ def usage_stats(view, *, used_steps=None, candidates=None):
     tokens['percent'] = percent(observed, limit)
     overrun = closeout.get('final_overrun') if isinstance(closeout.get('final_overrun'), dict) else None
     over = observed is not None and limit and observed > limit
-    tokens['over'] = bool(over or overrun)
+    extra = overrun.get('shared_tokens_over_ceiling', 0) if overrun else 0
+    tokens['over'] = bool(over or isinstance(extra, (int, float)) and extra > 0)
     if overrun:
-        extra = overrun.get('shared_tokens_over_ceiling', (observed or 0) - (limit or 0))
-        tokens['notes'].append('最终 A 受保护，超出 ' + fmt_tokens(extra))
+        tokens['notes'].append('最终 A 受保护' + ('，超出 ' + fmt_tokens(extra) if isinstance(extra, (int, float)) and extra > 0 else ''))
     elif over:
         tokens['notes'].append('已观测用量超出上限 ' + fmt_tokens(observed - limit))
     if usage.get('unknown_steps'):
@@ -669,7 +688,7 @@ def project(root, view, *, final_step=None, objective=None, memo=None):
     latest_a = None
     for item in ([] if 'error' in trail else trail['rounds']):
         for line in reversed(item['a']):
-            if line.get('sealed') and line.get('kind') != 'formal_review':
+            if line.get('sealed') and line.get('kind') != 'formal_review' and line.get('next_action') != 'audit':
                 latest_a = latest_a or line
         if latest_a:
             break
@@ -708,16 +727,21 @@ def _delivery_state(closeout, chosen, recommended_value, *, unresolved_reference
     return 'recommended', '已推荐未交付'
 
 
-def candidate_projection(root, before_step):
+def candidate_projection(root, before_step, *, job=None):
     """Existing candidate index (lineage.candidate_view) and observed call bindings."""
     from . import candidate_refs, lineage
-    value = lineage.project(root, before_step)
+    job = job if job is not None else Reader(root).node(before_step)['job']
+    cutoff = (job.get('final_report') or {}).get('source_cutoff', job.get('source_cutoff'))
+    extras = sorted(int(ref['path'].split('/')[2]) for ref in job.get('direct_refs', [])
+                    if cutoff is not None and int(ref['path'].split('/')[2]) > cutoff)
+    value = lineage.project(root, before_step, source_cutoff=cutoff, extra_steps=extras)
     try:
         references = candidate_refs.references(value['records'])
     except ValueError:
         references = {}
     return dict(index=value['candidates']['candidate_index'], graph=value['graph'], references=references,
-                records=value['records'])
+                records=value['records'], sources=value['sources'], subject=job,
+                recommended=(value['candidates'].get('a_recommended') or {}).get('candidate_id'))
 
 
 def candidate_rows(projection, *, recommended=None, delivered=None, audits=None, mechanisms=None, clean=None):
@@ -756,27 +780,43 @@ def candidate_rows(projection, *, recommended=None, delivered=None, audits=None,
                    status={'ok': '成功', 'failed': '失败', 'unknown': '未知'}.get(status, status or '未知'),
                    marks=marks, reference=text(projection['references'].get(identity)))
         rows.append(row)
-        groups.setdefault(row['evaluation_key'], []).append(row)
+        evaluation = item.get('evaluation_key')
+        # Missing comparability never creates a numeric comparison group.
+        identity_key = evaluation if isinstance(evaluation, str) and evaluation.strip() else ('unknown', order)
+        groups.setdefault(identity_key, []).append(row)
     # The first CANDIDATE_LIMIT rows of every group show by default; marked
     # (author-recommended, delivered, failed) rows always stay visible.
     for group in groups.values():
         for index, row in enumerate(group):
             row['extra'] = index >= CANDIDATE_LIMIT and not row['marks']
-    return dict(total=len(rows), groups=[dict(key=key, rows=value) for key, value in groups.items()],
+    display_groups = [dict(key=value[0]['evaluation_key'], rows=value) for value in groups.values()]
+    for group in display_groups:
+        group['ambiguous_label'] = sum(other['key'] == group['key'] for other in display_groups) > 1
+    return dict(total=len(rows), groups=display_groups,
                 limit=CANDIDATE_LIMIT,
                 recommended=recommended, delivered=delivered)
 
 
-def audit_facts(closeout):
-    result = {}
-    selection = (closeout or {}).get('control_selection') or {}
-    names = {'not_run': '未审计', 'completed': '公开审计已完成', 'passed': '公开审计通过', 'failed': '公开审计失败',
-             'pending': '审计待完成', 'skipped': '审计已跳过', 'unknown': '审计状态未知'}
-    for member in selection.get('members') or []:
-        if isinstance(member, dict) and isinstance(member.get('candidate_id'), str) and member.get('audit') is not None:
-            result[member['candidate_id']] = names.get(member['audit'], str(member['audit']))
-    # Without a control selection record, absence means "not recorded", not "not audited".
-    result['__recorded__'] = bool(selection.get('members'))
+def audit_facts(root, projection, *, subject=None):
+    """Verified public adapter receipts with exact candidate-byte attribution."""
+    from . import candidate_audit
+    sources = projection['sources']
+    job = projection['subject']
+    refs = candidate_audit.collect_refs(root, sources, step=job['step'], adjacent=job.get('candidate_audit'))
+    requests = [(source, payload) for source, payload, _, _ in sources]
+    if subject is not None:
+        requests.append((job, subject))
+    by_step = {ref['step']: ref for ref in refs}
+    for source, payload in requests:
+        if source['role'] == 'A' and payload.get('next_action') == 'audit':
+            ref = candidate_audit.receipt_ref(root, source['step'])
+            if ref is not None:
+                by_step[source['step']] = ref
+    receipts = candidate_audit.project_receipts(root, projection['records'], [by_step[key] for key in sorted(by_step)])
+    names = {'passed': '公开审计通过', 'rejected': '公开审计失败',
+             'artifact_scope_unknown': '公开审计已完成；候选文件归属未知', 'not_completed': '公开审计未完成'}
+    result = {row['candidate_id']: names[row['qualification']] for row in receipts if row['candidate_id'] is not None}
+    result['__recorded__'] = bool(receipts)
     return result
 
 
@@ -786,6 +826,7 @@ def result_card(reader, step, *, closeout=None, projection=None, goal_completion
     job, payload, seal = sealed['job'], sealed['payload'], sealed['seal']
     references = (projection or {}).get('references') or {}
     value = payload.get('candidate_recommendation')
+    audit = payload.get('next_action') == 'audit'
     resolution_error = None
     try:
         chosen = resolve_candidate(reader.root, job, value, references, strict=True) if value is not None else None
@@ -804,6 +845,8 @@ def result_card(reader, step, *, closeout=None, projection=None, goal_completion
                          direction=clean(str(item['direction']), 200) if item and item.get('direction') else None,
                          step=(item or {}).get('observation_step'), indexed=item is not None)
     delivery, delivery_label = _delivery_state(closeout, chosen, value, unresolved_reference=resolution_error is not None)
+    if audit:
+        delivery, delivery_label = 'audit', '审计请求'
     explanation = payload.get('selection_explanation') if isinstance(payload.get('selection_explanation'), dict) else None
     reason = first_sentence((explanation or {}).get('criteria'), 400) or first_sentence(payload.get('route_reason'), 400)
     change = (explanation or {}).get('criteria_change') if isinstance((explanation or {}).get('criteria_change'), dict) else None
@@ -820,8 +863,9 @@ def result_card(reader, step, *, closeout=None, projection=None, goal_completion
                 'formal_review' if job.get('formal_review') else 'ordinary',
                 next_action=payload.get('next_action'), decision=A_OUTCOMES.get(payload.get('next_action'), payload.get('next_action')),
                 summary=clean(payload['summary'], 1200) if isinstance(payload.get('summary'), str) else '未记录摘要',
-                delivery_state=delivery, delivery_label=delivery_label, chosen=candidate,
-                recommendation_raw=clean(value, 300) if isinstance(value, str) else None,
+                delivery_state=delivery, delivery_label=delivery_label, chosen=None if audit else candidate,
+                audit_target=candidate if audit else None,
+                recommendation_raw=clean(value, 300) if isinstance(value, str) and not audit else None,
                 resolution_error=resolution_error,
                 reason=clean(reason, 400) if reason else '未记录',
                 criteria_change=criteria_change,
@@ -831,9 +875,21 @@ def result_card(reader, step, *, closeout=None, projection=None, goal_completion
 
 
 def candidate_file(reader, candidate, projection):
-    """Exact sealed member for a candidate reference, by its source call order."""
+    """Exact sealed member from the candidate's existing original binding."""
     if not candidate or not candidate.get('reference') or not candidate.get('step'):
         return None
+    if projection.get('subject') is not None:
+        from . import history
+        bindings = []
+        for row in history.candidate_materials(reader.root, projection['subject']):
+            if row['candidate_id'] == candidate['id'] and row not in bindings:
+                bindings.append(row)
+        if len(bindings) == 1:
+            material = bindings[0]['material']
+            step = int(material['path'].split('/')[2])
+            for index, member in enumerate(reader.node(step)['seal'].get('materials') or [], 1):
+                if member == material:
+                    return dict(step=step, index=index, name=science._label(member, step), sha256=member['sha256'])
     match = re.fullmatch(r'[HWAE](\d{3,})-C(\d{3,})/(.+)', candidate['reference'])
     if not match or int(match[1]) != candidate['step']:
         return None

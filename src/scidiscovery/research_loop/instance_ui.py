@@ -901,11 +901,11 @@ class InstanceUI:
         return dict(rows=[(step, len(reader.node(step)['seal'].get('materials') or [])) for step in shown],
                     truncated=len(steps) > len(shown))
 
-    def _candidates(self, step):
+    def _candidates(self, step, *, job=None):
         key = (step, live.fingerprint(self.root))
         value = self.candidate_cache.get(key)
         if value is None:
-            value = ui_view.candidate_projection(self.root, step)
+            value = ui_view.candidate_projection(self.root, step, job=job)
             self.candidate_cache = {key: value}
         return value
 
@@ -939,7 +939,7 @@ class InstanceUI:
         closeout = None if 'error' in snapshot else snapshot['view'].get('closeout')
         mechanisms = ui_view.guarded(ui_view.mechanism_labels, reader, range(1, step + 1))
         mechanisms = {} if 'error' in mechanisms else mechanisms
-        projection = ui_view.guarded(self._candidates, step, clean=clean)
+        projection = ui_view.guarded(self._candidates, step, job=job, clean=clean)
         card = ui_view.guarded(lambda: ui_view.result_card(reader, step, closeout=closeout,
             projection=None if 'error' in projection else projection, clean=clean), clean=clean)
         delivered = ((closeout or {}).get('last_confirmed') or {}).get('candidate_id')
@@ -956,8 +956,10 @@ class InstanceUI:
                 files += ui.link(kind + '：' + member['name'].rsplit('/', 1)[-1], '/nodes/' + str(member['step']) + '/materials/' + str(member['index']), cls='primary')
                 files += '<p class="note">sha256 ' + ui.esc(member['sha256'][:16]) + '… · 第 ' + ui.esc(member['step']) + ' 阶段研究文件</p>'
             files += ui.link('查看完整原文', '#full-text', cls='secondary-link')
-        rows = ui_view.guarded(lambda: ui_view.candidate_rows(projection, recommended=(card.get('chosen') or {}).get('id')
-            if 'error' not in card else None, delivered=delivered, audits=ui_view.audit_facts(closeout), mechanisms=mechanisms, clean=clean), clean=clean) \
+        rows = ui_view.guarded(lambda: ui_view.candidate_rows(projection, recommended=projection.get('recommended')
+            if card.get('next_action') == 'audit' else (card.get('chosen') or {}).get('id')
+            if 'error' not in card else None, delivered=delivered,
+            audits=ui_view.audit_facts(self.root, projection, subject=payload), mechanisms=mechanisms, clean=clean), clean=clean) \
             if 'error' not in projection else projection
         table = ui.candidate_table(rows, ident='candidates')
         if not final:

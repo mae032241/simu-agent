@@ -129,3 +129,60 @@ def test_csp_keeps_hash_only_inline_sources():
     assert "'unsafe-inline'" not in render.CSP and "'unsafe-eval'" not in render.CSP
     assert render.CSP == ("default-src 'none'; style-src " + render.STYLE_SOURCE + "; script-src " + render.SCRIPT_SOURCE
                           + " " + CONFIG_SCRIPT_CSP + "; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+
+
+def test_final_gap_page_keeps_candidates_metrics_sources_and_exact_downloads(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import contracts as c, controller, ui_view
+    from test_final_state import external_scene, final_job
+    from test_instance_science import read
+    root = external_scene(tmp_path, monkeypatch, accounted_worker=100500)
+    c.build_job(root, 3, 'A', [1, 2])
+    stopped = (root / 'jobs/003.json').read_bytes()
+    assert controller.run(root)['status'] == 'delivery_confirmed'
+    job, _ = final_job(root)
+    assert job['step'] == 4 and job['source_cutoff'] == 2
+    assert not (root / 'native-evidence/003/result-identity.json').exists()
+    key = tmp_path / 'operator.key'; key.write_bytes(b'fixture-final-gap-key-32-bytes---'); key.chmod(0o600)
+    ui, cookie = session(root, key)
+    before = files(root)
+    projection = ui_view.candidate_projection(root, 4)
+    assert [record['step'] for record in projection['records']] == [1, 2]
+    assert len(projection['index']) == 2
+    card = ui_view.result_card(ui_view.Reader(root), 4, projection=projection)
+    assert card['chosen']['id'] == 'run-1' and card['chosen']['indexed']
+    assert card['chosen']['metric'] == '0.6' and card['chosen']['step'] == 2
+    for target in ('/final-results', '/results/4'):
+        status, page, _ = ui.get(target, host=ui.host, cookie=cookie)
+        page = text(page)
+        assert status == 200 and 'Public experiment 1' in page and 'Public experiment 2' in page
+        assert '0.6' in page and 'fixture-public' in page and '无法读取' not in page
+        assert 'href="/results/2"' in page and 'href="/nodes/2/materials/1"' in page
+        assert '下载推荐候选的研究文件：train.py' in page
+    status, body, headers = ui.get('/nodes/2/materials/1', host=ui.host, cookie=cookie)
+    assert status == 200 and headers['Content-Disposition'].startswith('attachment;')
+    assert read(body) == (root / 'project/nodes/002/artifacts/train.py').read_bytes()
+    assert files(root) == before and (root / 'jobs/003.json').read_bytes() == stopped
+
+
+def test_audit_page_marks_only_prior_scientific_recommendation(tmp_path):
+    from scidiscovery.research_loop import ui_view
+    from test_candidate_audit import audit_fixture
+    root = audit_fixture(tmp_path, candidate_count=2)
+    finish(root, 3, 'A', [1, 2], action='continue_w', recommendation='run-1')
+    finish(root, 4, 'A', [1, 2, 3], action='audit', recommendation='run-2')
+    key = tmp_path / 'operator.key'; key.write_bytes(b'fixture-audit-page-key-32-bytes--'); key.chmod(0o600)
+    ui, cookie = session(root, key)
+    before = files(root)
+    projection = ui_view.candidate_projection(root, 4)
+    assert projection['recommended'] == 'run-1'
+    page = text(ui.get('/results/4', host=ui.host, cookie=cookie)[1])
+    card = re.search(r'<section class="result-card.*?</section>', page, re.S).group(0)
+    assert '审计对象' in card and 'Public experiment 2' in card and '★' not in card
+    assert '审计请求' in card and '已推荐未交付' not in card
+    table = re.search(r'<section class="candidates.*?</section>', page, re.S).group(0)
+    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table, re.S)
+    p = next(row for row in rows if 'Public experiment 1' in row)
+    q = next(row for row in rows if 'Public experiment 2' in row)
+    assert 'mark-recommended' in p and 'A 推荐（作者记录）' in p
+    assert 'mark-recommended' not in q and 'A 推荐（作者记录）' not in q
+    assert files(root) == before

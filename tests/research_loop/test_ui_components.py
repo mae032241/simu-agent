@@ -67,3 +67,35 @@ def test_candidate_table_is_grouped_neutral_and_keeps_every_row_reachable():
     order = [int(value) for value in __import__('re').findall(r'data-order="(\d+)"', html)]
     val, test = order[:23], order[23:]
     assert val == sorted(val) and test == sorted(test)
+
+
+def test_live_disclosure_and_focus_keys_follow_exact_component_identity():
+    line = dict(step=2, role='W', role_label='W · 实验', sealed=True,
+                links=[dict(label='阶段结论', href='/results/2')])
+    item = dict(index=1, summary='Round', steps=[1, 2], h=None, w=[line], a=[], others=[])
+    before = ui.timeline_round(item)
+    after = ui.timeline_round(dict(item, summary='Changed', steps=[1, 2, 3]))
+    for markup in (before, after):
+        assert 'data-details-key="round:1-1"' in markup
+        assert 'data-live-focus="round:1-1"' in markup
+        assert 'data-live-focus="stage:2:/results/2"' in markup
+    row = dict(heading='Instance', path='/exact/instance', retry='/instances', error=dict(kind='OSError', message='busy'))
+    failed = ui.instance_card(row)
+    loaded = ui.instance_card(dict(row, error=None, title='Task', state='active', badge='进行中', headline='Working',
+        tokens=dict(text='10 / 100', percent=10), href='/instances/1/'))
+    for markup in (failed, loaded):
+        assert 'data-details-key="instance-path:/exact/instance"' in markup
+        assert 'data-live-focus="instance-path:/exact/instance"' in markup
+    assert 'instance-path:/different/instance' in ui.instance_card(dict(row, path='/different/instance'))
+
+
+def test_audit_result_identifies_the_target_without_claiming_a_recommendation():
+    card = dict(step=3, kind='ordinary', decision='audit', delivery_state='audit', delivery_label='审计请求',
+                chosen=None, audit_target=dict(label='Audit candidate', metric='0.5', evaluation_key='val', step=2),
+                summary='Audit finding', reason='Check the retained measurement', criteria_change=None,
+                goal_completion='未声明', unmet=[], unmet_omitted=0)
+    markup = ui.result_card(card)
+    assert '审计对象：Audit candidate' in markup and '审计理由' in markup
+    assert '推荐' not in markup and 'href="/results/2"' in markup
+    missing = ui.result_card(dict(card, audit_target=None))
+    assert '审计对象未能对应已观察候选' in missing and '推荐' not in missing

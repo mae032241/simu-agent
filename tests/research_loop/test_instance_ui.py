@@ -429,7 +429,7 @@ def test_headless_browser_executes_public_progress_poll(tmp_path, monkeypatch):
     import subprocess
     import tempfile
     import time
-    from scidiscovery.research_loop import instance_ui, contracts as c, execution, runtime
+    from scidiscovery.research_loop import instance_ui, contracts as c, execution, runtime, ui_view
     chrome = shutil.which('google-chrome') or shutil.which('chromium')
     node = shutil.which('node')
     if not chrome or not node:
@@ -492,8 +492,26 @@ network = false
                     c.write(root / 'host-control/operations' / (operation_id + '.json'), dict(
                         operation_id=operation_id, kind='controller', sequence=1, status='applied',
                         result=dict(status='native_stopped', last_step=3, reason='Private fixture diagnostic')))
-        return original_snapshot(selected, **options)
+        snapshot = original_snapshot(selected, **options)
+        if selected.root == root and advance.exists() and advance.read_text() in {'3-refresh', '3-outside'}:
+            # A display-only update exercises focus restoration without another
+            # scientific stage or changing any sealed fixture original.
+            import copy
+            snapshot = copy.deepcopy(snapshot)
+            snapshot['ui']['trail']['rounds'][0]['summary'] += ' · Browser heading update ' + advance.read_text()
+        return snapshot
     monkeypatch.setattr(InstanceUI, '_snapshot', fixture_snapshot)
+    original_candidates = ui_view.candidate_projection
+    def fixture_candidates(selected, step, **options):
+        projection = original_candidates(selected, step, **options)
+        if selected == root:
+            # Synthetic public observations exercise presentation only.
+            projection.update(index=[dict(id=f'local-{number:02d}', label=f'Browser candidate {number}',
+                metric=None if number == 3 else number / 10, evaluation_key='test' if number in (2, 24) else 'val',
+                observation_step=1, status='failed' if number == 4 else 'ok') for number in range(1, 26)],
+                graph={}, references={})
+        return projection
+    monkeypatch.setattr(ui_view, 'candidate_projection', fixture_candidates)
     monkeypatch.setattr(control, 'start_background', detached)
     ui = InstanceUI(workspace, secret_file=key, workspace=True); ready = threading.Event(); servers = []; errors = []
     server_type = instance_ui.ThreadingHTTPServer
@@ -643,7 +661,8 @@ if (!(await evaluate(`document.querySelector('form[action="/control/create"] but
 await evaluate(`document.querySelector('form[action="/control/configure"] button[value="preview"]').click();true`);
 await waitFor(`document.querySelector('[aria-current=step]')?.dataset.setupMarker === '3' && !document.querySelector('form[action="/control/create"] button').disabled && document.querySelector('.confirmation').innerText.includes('browser-corrected-model')`);
 await evaluate(`document.querySelector('form[action="/control/create"] button').click(); true`);
-await waitFor('location.pathname === "/instances/1/" && document.body.innerText.includes("实例已创建")');
+await waitFor('location.pathname === "/instances/1/" && document.getElementById("live-hero")?.innerText.includes("未开始") && document.querySelector(\'form[action="/instances/1/control/start"]\') !== null');
+if (!(await evaluate(`document.querySelector('h1').textContent.includes('Browser direct-form research task.') && document.getElementById('live-usage').innerText.includes('1,234')`))) throw new Error('Created overview lost the selected task or budget');
 await evaluate(`document.querySelector('form[action="/instances/1/control/start"] button').click(); true`);
 await waitFor('document.body.innerText.includes("已接受请求")');
 await call('Page.navigate', {url: origin + '/instances/1/nodes/1/progress?attempt=0'});
@@ -677,16 +696,56 @@ await waitFor(`document.querySelector('[data-stream-status]')?.textContent.inclu
 if ((await evaluate(`document.querySelector('[data-events]').textContent`)).includes('Second phase public output')) throw new Error('Historical output followed a newer node');
 await call('Page.navigate', {url:origin+'/instances/1/'});
 await waitFor(`document.getElementById('live-hero')?.innerText.includes('第 2 阶段') && document.querySelector('[data-live-url]')?.dataset.state==='connected'`);
-await evaluate(`window.liveDraftSentinel='preserved';document.querySelector('details.more-actions').open=true;document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value='4321';document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value='Keep this unsent budget explanation';true`);
+await evaluate(`(()=>{window.liveDraftSentinel='preserved';document.querySelector('details.more-actions').open=true;document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value='4321';document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value='Keep this unsent budget explanation';const round=document.querySelector('#live-trail details[data-round]');window.retainedRound=round.dataset.detailsKey;round.open=false;round.querySelector('summary').focus();return true})()`);
 await writeFile(process.env.SCID_TEST_ADVANCE, '3');
 await waitFor(`document.getElementById('live-hero')?.innerText.includes('第 3 阶段') && document.getElementById('live-usage')?.innerText.includes('30 / 1,234') && document.getElementById('live-trail')?.innerText.includes('Third browser phase conclusion')`);
 if (!(await evaluate(`window.liveDraftSentinel==='preserved' && document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value==='4321' && document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value==='Keep this unsent budget explanation'`))) throw new Error('Live dashboard lost typed values or reloaded');
+if (!(await evaluate(`Array.from(document.querySelectorAll('#live-trail details[data-details-key]')).some(round=>round.dataset.detailsKey===window.retainedRound && !round.open && document.activeElement===round.querySelector('summary'))`))) throw new Error('Live trail lost the reader\'s collapsed round or keyboard summary focus');
 await screenshot('live-dashboard-draft-preserved');
+await evaluate(`(()=>{const round=Array.from(document.querySelectorAll('#live-trail details[data-details-key]')).find(round=>round.dataset.detailsKey===window.retainedRound);round.open=true;const link=round.querySelector('a');window.retainedLink=link.dataset.liveFocus;link.focus();return true})()`);
+await writeFile(process.env.SCID_TEST_ADVANCE, '3-refresh');
+await waitFor(`document.getElementById('live-trail')?.innerText.includes('Browser heading update')`);
+if (!(await evaluate(`document.activeElement?.dataset.liveFocus===window.retainedLink && document.activeElement.isConnected`))) throw new Error('Live trail lost keyboard focus on the same stage link');
+await evaluate(`document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').focus();true`);
+await writeFile(process.env.SCID_TEST_ADVANCE, '3-outside');
+await waitFor(`document.getElementById('live-trail')?.innerText.includes('Browser heading update 3-outside')`);
+if (!(await evaluate(`document.activeElement===document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]')`))) throw new Error('Live trail stole keyboard focus from another form');
 await call('Page.navigate', {url:origin+'/'});
 await waitFor(`document.getElementById('live-instances')?.innerText.includes('第 3 阶段') && document.getElementById('live-instances')?.innerText.includes('30 / 1,234 tokens')`);
 await screenshot('live-workbench-loaded-status');
-await call('Page.navigate', {url:origin+'/instances/1/progress'});
+await evaluate(`(()=>{const details=document.querySelector('#live-instances details.review-full-path');details.open=true;window.retainedPath=details.dataset.detailsKey;details.querySelector('summary').focus();return true})()`);
 await writeFile(process.env.SCID_TEST_ADVANCE, '4');
+await waitFor(`document.getElementById('live-instances')?.innerText.includes('第 4 阶段')`);
+if (!(await evaluate(`Array.from(document.querySelectorAll('#live-instances details[data-details-key]')).some(details=>details.dataset.detailsKey===window.retainedPath && details.open && document.activeElement===details.querySelector('summary'))`))) throw new Error('Live workbench lost the expanded exact instance path or summary focus');
+await screenshot('live-workbench-path-preserved');
+await call('Page.navigate', {url:origin+'/instances/1/results/2'});
+await waitFor(`document.querySelector('.result-card') !== null && document.querySelector('.candidates-fold') !== null`);
+await evaluate(`document.querySelector('.candidates-fold').open=true;true`);
+const initialGroups = await evaluate(`Array.from(document.querySelectorAll('.candidate-group')).map(group=>Array.from(group.querySelectorAll('tbody tr')).map(row=>row.dataset.order))`);
+if (initialGroups.length !== 2 || initialGroups.flat().length !== 25) throw new Error('Candidate groups lost fixture observations');
+if (!(await evaluate(`Array.from(document.querySelectorAll('.candidate-table tbody tr.extra')).some(row=>!row.getClientRects().length)`))) throw new Error('Candidate expansion fixture did not begin collapsed');
+await evaluate(`document.querySelector('.toggle-label').click();true`);
+if (!(await evaluate(`Array.from(document.querySelectorAll('.candidate-table tbody tr')).every(row=>row.getClientRects().length)`))) throw new Error('Expand all left candidates unreachable');
+for (const direction of ['desc','asc','order']) {
+  await evaluate(`document.querySelector('[data-sort-group]').click();true`);
+  const state = await evaluate(`(()=>{const groups=Array.from(document.querySelectorAll('.candidate-group'));const group=groups[0];return {order:groups.map(item=>Array.from(item.querySelectorAll('tbody tr')).map(row=>row.dataset.order)),metrics:Array.from(group.querySelectorAll('tbody tr')).map(row=>row.dataset.metric===''?null:Number(row.dataset.metric)),state:group.querySelector('[data-sort-group]').dataset.state,neutral:group.querySelector('[data-sort-note]').hidden}})()`);
+  if (state.state !== direction || JSON.stringify(state.order[1]) !== JSON.stringify(initialGroups[1])) throw new Error('Candidate sort crossed evaluation groups');
+  if (direction === 'order') {
+    if (JSON.stringify(state.order) !== JSON.stringify(initialGroups) || !state.neutral) throw new Error('Candidate sort did not restore neutral observation order');
+  } else {
+    const numeric = state.metrics.filter(value=>value!==null);
+    if (state.neutral || numeric.some((value,index)=>index>0 && (direction==='desc'?numeric[index-1]<value:numeric[index-1]>value)) || state.metrics.at(-1)!==null) throw new Error('Candidate numeric ordering or missing-metric retention failed');
+  }
+}
+await evaluate(`document.querySelector('.toggle-all').checked=false;true`);
+if (!(await evaluate(`Array.from(document.querySelectorAll('.candidate-table tbody tr.extra')).every(row=>!row.getClientRects().length)`))) throw new Error('Restored neutral order no longer supports collapsed candidates');
+await screenshot('result-candidates-desktop');
+await call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});
+await noOverflow();
+if (!(await evaluate(`parseFloat(getComputedStyle(document.querySelector('.candidate-table')).fontSize)>=13 && document.querySelector('.result-card').getBoundingClientRect().right<=innerWidth && document.querySelector('.table-scroll').scrollWidth>document.querySelector('.table-scroll').clientWidth`))) throw new Error('Mobile result or candidate table is unreadable');
+await screenshot('result-candidates-mobile');
+await call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
+await call('Page.navigate', {url:origin+'/instances/1/progress'});
 await waitFor(`document.querySelector('[data-progress-heading]')?.textContent.includes('第 4 阶段') && document.querySelector('[data-stream-status]')?.textContent.includes('正在运行；等待助手输出')`);
 await writeFile(process.env.SCID_TEST_ADVANCE, 'stopped');
 await waitFor(`document.querySelector('[data-stream-status]')?.textContent.includes('运行状态未确认')`);

@@ -28,8 +28,9 @@ def attr(name, value):
     return '' if value in (None, '') else ' ' + name + '="' + esc(value) + '"'
 
 
-def link(label, href, *, cls=None, title=None):
-    return Safe('<a href="' + esc(href) + '"' + attr('class', cls) + attr('title', title) + '>' + esc(label) + '</a>')
+def link(label, href, *, cls=None, title=None, focus_key=None):
+    return Safe('<a href="' + esc(href) + '"' + attr('class', cls) + attr('title', title)
+                + attr('data-live-focus', focus_key) + '>' + esc(label) + '</a>')
 
 
 def badge(text, tone='neutral'):
@@ -96,8 +97,9 @@ def facts(rows):
         + '</dd></div>' for row in rows) + '</dl>')
 
 
-def links(rows):
-    return Safe('<p class="links">' + ' · '.join(link(row['label'], row['href']) for row in rows) + '</p>')
+def links(rows, *, focus_prefix=None):
+    return Safe('<p class="links">' + ' · '.join(link(row['label'], row['href'],
+        focus_key=focus_prefix + row['href'] if focus_prefix else None) for row in rows) + '</p>')
 
 
 def role_line(line, *, expanded=False):
@@ -129,7 +131,7 @@ def role_line(line, *, expanded=False):
             body += '</tbody></table></div><p class="note">按首次观察顺序列出；不代表科学排序。</p>'
         else:
             body += empty('本阶段封存观察中没有候选。')
-    body += links(line.get('links') or [])
+    body += links(line.get('links') or [], focus_prefix='stage:' + str(line['step']) + ':')
     return Safe('<article class="role-line">' + body + '</article>')
 
 
@@ -141,7 +143,8 @@ def timeline_round(item, *, open_=False):
     steps = item.get('steps') or []
     meta = ('阶段 ' + str(steps[0]) + ('–' + str(steps[-1]) if len(steps) > 1 else '')) if steps else ''
     key = str(item.get('index')) + '-' + str(steps[0] if steps else '')
-    return Safe('<details class="round" data-round="' + esc(key) + '"' + (' open' if open_ else '') + '><summary><span class="round-title">' + esc(title)
+    return Safe('<details class="round" data-round="' + esc(key) + '" data-details-key="round:' + esc(key) + '"'
+                + (' open' if open_ else '') + '><summary data-live-focus="round:' + esc(key) + '"><span class="round-title">' + esc(title)
                 + '</span> <span class="round-meta">' + esc(meta) + '</span></summary>' + body + '</details>')
 
 
@@ -212,10 +215,14 @@ def activity(value):
 
 def instance_card(row):
     """One workspace instance card; failures show the exact reason and a retry."""
+    path_key = 'instance-path:' + str(row['path'])
+    path_details = ('<details class="review-full-path" data-details-key="' + esc(path_key)
+                    + '"><summary data-live-focus="' + esc(path_key) + '">查看实例完整目录</summary><code>'
+                    + esc(row['path']) + '</code></details>')
     if row.get('error'):
         return Safe('<article class="instance-card failed"><h3>' + esc(row['heading']) + '</h3><p class="inline-error">无法读取此实例：'
                     + esc(row['error']['kind']) + '：' + esc(row['error']['message']) + '</p>'
-                    + '<details class="review-full-path"><summary>查看实例完整目录</summary><code>' + esc(row['path']) + '</code></details>'
+                    + path_details
                     + link('重试', row['retry'], cls='secondary-link') + '</article>')
     tone = {'completed': 'ok', 'active': 'active', 'waiting': 'warn', 'unknown': 'warn', 'budget_exhausted': 'bad',
             'error': 'bad'}.get(row['state'], 'neutral')
@@ -225,7 +232,7 @@ def instance_card(row):
                 + ('<p class="note">当前：' + esc(row['stage']) + '</p>' if row.get('stage') else '')
                 + progress(tokens.get('percent'), over=tokens.get('over'))
                 + '<p class="note' + (' over' if tokens.get('over') else '') + '">模型用量 ' + esc(tokens['text']) + '</p>'
-                + '<details class="review-full-path"><summary>查看实例完整目录</summary><code>' + esc(row['path']) + '</code></details>'
+                + path_details
                 + link('打开', row['href'], cls='primary') + '</article>')
 
 
@@ -261,7 +268,8 @@ def candidate_table(value, *, open_=True, ident='candidates'):
         body += ('<div class="candidate-group" data-group="' + esc(number) + '"><div class="group-head"><h3>口径：' + esc(group['key'])
                  + '<span class="count">（' + esc(len(group['rows'])) + '）</span></h3>'
                  + ('<button type="button" class="secondary-button sort-button" data-sort-group="' + esc(number) + '">在此口径内按指标排序</button>'
-                    '<p class="sort-note" data-sort-note hidden>仅按此口径数值排序，不代表科学排序。</p>' if numeric > 1 else '') + '</div>'
+                    '<p class="sort-note" data-sort-note hidden>仅按此口径数值排序，不代表科学排序。</p>' if numeric > 1 else '')
+                 + ('<p class="note">显示名称相同的口径保留各自原始身份，数值不可合并比较。</p>' if group.get('ambiguous_label') else '') + '</div>'
                  '<div class="table-scroll"><table class="candidate-table"><thead><tr>'
                  '<th scope="col">标记</th><th scope="col">标签</th><th scope="col">机制</th><th scope="col">指标</th>'
                  '<th scope="col">方向</th><th scope="col">来源阶段</th><th scope="col">审计</th><th scope="col">状态</th></tr></thead><tbody>')
@@ -284,14 +292,15 @@ def candidate_table(value, *, open_=True, ident='candidates'):
 def result_card(card, *, files=None, full_href=None):
     if 'error' in card:
         return Safe('<section class="result-card">' + error_inline(card, what='结论卡片') + '</section>')
-    tone = {'confirmed': 'ok', 'recommended': 'active', 'none': 'neutral', 'unknown': 'warn'}[card['delivery_state']]
+    tone = {'confirmed': 'ok', 'recommended': 'active', 'none': 'neutral', 'unknown': 'warn', 'audit': 'neutral'}[card['delivery_state']]
     kind = {'closeout': '最终评估', 'formal_review': '正式评审', 'ordinary': '综合评估'}.get(card['kind'], '综合评估')
     body = ('<section class="result-card hero"><p class="eyebrow">第 ' + esc(card['step']) + ' 阶段 · A · ' + esc(kind)
             + ' · 决定：' + esc(card['decision'] or '未记录') + '</p>'
             '<p class="head-status">' + badge(card['delivery_label'], tone) + '</p>')
-    chosen = card.get('chosen')
+    audit = card['delivery_state'] == 'audit'
+    chosen = card.get('audit_target') if audit else card.get('chosen')
     if chosen:
-        body += ('<h2 class="chosen">' + esc(chosen['label']) + '</h2><dl class="facts">'
+        body += ('<h2 class="chosen">' + ('审计对象：' if audit else '') + esc(chosen['label']) + '</h2><dl class="facts">'
                  '<div><dt>指标</dt><dd>' + esc(chosen['metric']) + '（口径：' + esc(chosen['evaluation_key']) + '）</dd></div>'
                  + ('<div><dt>方向</dt><dd>' + esc(chosen['direction']) + '</dd></div>' if chosen.get('direction') else '')
                  + '<div><dt>来源阶段</dt><dd>' + (link('第 ' + str(chosen['step']) + ' 阶段', '/results/' + str(chosen['step']))
@@ -299,13 +308,13 @@ def result_card(card, *, files=None, full_href=None):
                  + ('<div><dt>作者引用</dt><dd><code>' + esc(chosen['reference']) + '</code></dd></div>' if chosen.get('reference') else '')
                  + '</dl>')
     else:
-        body += '<h2 class="chosen">' + ('本阶段未推荐候选方案' if card['delivery_state'] == 'none' else '候选推荐未能对应已观察候选') + '</h2>'
+        body += '<h2 class="chosen">' + ('审计对象未能对应已观察候选' if audit else '本阶段未推荐候选方案' if card['delivery_state'] == 'none' else '候选推荐未能对应已观察候选') + '</h2>'
         if card.get('recommendation_raw'):
             body += '<p>作者引用：<code>' + esc(card['recommendation_raw']) + '</code></p>'
         if card.get('resolution_error'):
             body += '<p class="inline-error">引用未能按冻结映射解析：' + esc(card['resolution_error']) + '</p>'
     body += '<p class="one-line">' + esc(card['summary']) + '</p>'
-    body += '<h3>选择理由</h3><p>' + esc(card['reason']) + '</p>'
+    body += '<h3>' + ('审计理由' if audit else '选择理由') + '</h3><p>' + esc(card['reason']) + '</p>'
     change = card.get('criteria_change')
     if change is None:
         body += '<p class="note">准则变化：未记录</p>'

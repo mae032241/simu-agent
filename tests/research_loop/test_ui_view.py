@@ -30,7 +30,7 @@ def test_numbers_durations_and_metrics_are_readable_without_rounding_science():
 
 
 def test_metric_direction_comes_only_from_author_declaration():
-    assert ui_view.direction_sense('higher recovery is better') == 'max'
+    assert ui_view.direction_sense('higher is better') == 'max'
     assert ui_view.direction_sense('min') == 'min' and ui_view.direction_sense('lower is better') == 'min'
     assert ui_view.direction_sense(None) is None and ui_view.direction_sense('see notes') is None
     same = [dict(evaluation_key='val', metric=0.5, direction='max'), dict(evaluation_key='val', metric=0.7, direction='max')]
@@ -39,6 +39,25 @@ def test_metric_direction_comes_only_from_author_declaration():
     assert ui_view._candidate_extreme(undeclared)['text'] == '范围 0.5–0.7（val；方向未声明）'
     mixed = [dict(evaluation_key='a', metric=1.0, direction='max'), dict(evaluation_key='b', metric=9.0, direction='max')]
     assert ui_view._candidate_extreme(mixed)['text'] == '多种口径，见候选表'
+
+
+@pytest.mark.parametrize('label, expected', [
+    ('max', 'max'), ('min', 'min'), ('MAXIMIZE', 'max'), ('minimise', 'min'),
+    ('higher', 'max'), ('lower', 'min'), (' Higher  is better. ', 'max'),
+    ('lower values are better', 'min'),
+    ('lower is worse', None), ('higher is worse', None),
+    ('lower is not better', None), ('higher is not better', None),
+    ('higher or lower', None), ('max but lower is better', None),
+    ('min and higher is better', None), ('maximize loss unless lower is better', None),
+    ('higher recovery is better', None), ('a larger sample was observed', None),
+])
+def test_metric_direction_requires_an_unambiguous_declared_label(label, expected):
+    assert ui_view.direction_sense(label) == expected
+    rows = [dict(evaluation_key='val', metric=value, direction=label) for value in (1, 2)]
+    extreme = ui_view._candidate_extreme(rows)
+    assert extreme.get('sense') == expected
+    if expected is None:
+        assert extreme['text'].startswith('范围 ') and 'value' not in extreme
 
 
 class FakeReader:
@@ -269,3 +288,149 @@ def test_reader_memo_reuses_only_unchanged_verified_originals(tmp_path):
     original.chmod(0o600); original.write_bytes(original.read_bytes() + b' ')
     with pytest.raises(ValueError):
         ui_view.Reader(root, memo).node(1)
+
+
+@pytest.mark.parametrize('dependency', ['result.json', 'stage-end.json', 'settings.json'])
+def test_reader_memo_rechecks_canonical_seal_dependencies(tmp_path, dependency):
+    root, _ = prepare(tmp_path, enabled=False)
+    finish(root, 1, 'H', [], action='experiment')
+    memo = {}
+    first = ui_view.Reader(root, memo).node(1)
+    assert ui_view.Reader(root, memo).node(1) is first
+    path = root / ('settings.json' if dependency == 'settings.json' else 'native-evidence/001/' + dependency)
+    if path.exists():
+        path.chmod(0o600)
+        path.write_bytes(path.read_bytes() + b' ')
+    else:
+        path.write_text('{}\n')
+    with pytest.raises(ValueError):
+        ui_view.Reader(root, memo).node(1)
+
+
+def test_evaluation_identity_survives_cleaning_truncation_and_missing_values():
+    clean = lambda value, limit=300: '[private]' if value.startswith('/secret/') else value[:limit]
+    keys = ['/secret/alpha', '/secret/beta', 'x' * 310 + 'a', 'x' * 310 + 'b', None, '未声明']
+    original = [dict(id=str(index), evaluation_key=key, metric=index, direction='max', observation_step=2)
+                for index, key in enumerate(keys)]
+    value = ui_view.candidate_rows(dict(index=original, graph={}, references={}), clean=clean)
+    assert len(value['groups']) == 6
+    assert [group['key'] for group in value['groups'][:2]] == ['[private]', '[private]']
+    assert all(group['ambiguous_label'] for group in value['groups'])
+    assert '/secret/' not in json.dumps(value)
+    rows = [ui_view.clean_row(row, clean) for row in original[:2]]
+    extreme = ui_view._candidate_extreme(rows)
+    assert extreme['text'] == '多种口径，见候选表' and 'value' not in extreme
+    missing = ui_view._candidate_extreme([dict(evaluation_key=None, metric=1, direction='max'),
+                                          dict(evaluation_key=None, metric=2, direction='max')])
+    assert missing['text'] == '口径未声明，无法比较' and 'value' not in missing
+    unknown = ui_view.candidate_rows(dict(index=[dict(id=str(number), metric=number, evaluation_key=None)
+        for number in (1, 2)], graph={}, references={}))
+    assert len(unknown['groups']) == 2 and all(len(group['rows']) == 1 for group in unknown['groups'])
+
+
+def test_protected_final_with_zero_excess_is_not_an_overrun():
+    view = dict(budget=dict(max_tokens=1000), usage=dict(observed_tokens=500),
+                closeout=dict(final_overrun=dict(shared_tokens_over_ceiling=0, shared_seconds_over_ceiling=0)))
+    tokens = ui_view.usage_stats(view)['tokens']
+    assert tokens['over'] is False and tokens['notes'] == ['最终 A 受保护']
+    view['closeout']['final_overrun']['shared_tokens_over_ceiling'] = 25
+    assert ui_view.usage_stats(view)['tokens']['over'] is True
+
+
+def test_audit_request_is_a_target_without_recommendation_or_delivery(tmp_path, monkeypatch):
+    reader = FakeReader({1: sealed(1, 'A', dict(summary='Audit this evidence', next_action='audit',
+        candidate_recommendation='candidate-p'))})
+    node = dict(step=1, role='A', state='seal_present_unverified')
+    line = ui_view.role_line(reader, node, lambda value, limit=300: value, labels={'candidate-p': 'P'})
+    assert line['audit_target'] == 'candidate-p' and 'recommendation' not in line
+    assert dict(label='审计对象', value='P') in line['facts']
+    assert not any('★' in row['value'] for row in line['facts'])
+    card = ui_view.result_card(reader, 1, closeout=dict(last_confirmed=dict(candidate_id='candidate-p')),
+                              clean=lambda value, limit=300: value)
+    assert card['chosen'] is None and card['audit_target']['id'] == 'candidate-p'
+    assert card['recommendation_raw'] is None and card['delivery_state'] == 'audit'
+    monkeypatch.setattr(ui_view, 'Reader', lambda root, memo=None: reader)
+    value = ui_view.project(reader.root, dict(nodes=[node], closeout={}))
+    assert value['recommended'] is None and value['candidates']['recommended'] is False
+    assert 'A 推荐 1' not in ui_view.usage_stats({}, candidates=value['candidates'])['candidates']['notes']
+
+
+def test_audit_preserves_prior_scientific_recommendation_in_overview(tmp_path, monkeypatch):
+    reader = FakeReader({
+        1: sealed(1, 'A', dict(summary='Recommend P', next_action='continue_w', candidate_recommendation='P')),
+        2: sealed(2, 'A', dict(summary='Audit Q', next_action='audit', candidate_recommendation='Q')),
+    })
+    monkeypatch.setattr(ui_view, 'Reader', lambda root, memo=None: reader)
+    nodes = [dict(step=step, role='A', state='seal_present_unverified') for step in (1, 2)]
+    value = ui_view.project(reader.root, dict(nodes=nodes))
+    assert value['recommended'] == 'P' and value['latest_a']['step'] == 1
+    assert value['candidates']['recommended'] is True
+    assert value['trail']['rounds'][0]['a'][1]['audit_target'] == 'Q'
+    rows = ui_view.candidate_rows(dict(index=[dict(id=identity, evaluation_key='val') for identity in ('P', 'Q')],
+                                      graph={}, references={}), recommended=value['recommended'])
+    assert [row['marks'] for row in rows['groups'][0]['rows']] == [['recommended'], []]
+
+
+def test_implementation_reference_uses_exact_candidate_binding_and_file(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import controller, history
+    public = tmp_path / 'public'; public.mkdir()
+    objective = public / 'objective.md'; objective.write_text('Compare exact retained objects.')
+    observer = tmp_path / 'observer.py'
+    observer.write_text('''import json,sys
+r=json.load(sys.stdin)
+rows=[dict(id=label,label=label,implementation='history/nodes/002/artifacts/'+label+'/model.py',evaluation_key='val',metric=metric,direction='max',status='ok',evidence=['project/global/objective.md']) for label,metric in [('P',.8),('Q',.6)]] if r['step']==2 else []
+print(json.dumps(dict(candidates=rows,current_candidate=None,actual_submission=None,coverage=dict(status='complete',note='Fixture only'))))
+''')
+    root = tmp_path / 'instance'
+    controller.prepare(root, objective, public, ['never-invoked'], max_tokens=100000, max_seconds=300,
+        max_steps=8, model='fixture', reasoning_effort='high', search_policy=None,
+        history_observer=dict(adapter=str(observer), config={}))
+    finish(root, 1, 'H', [], action='experiment')
+    finish(root, 2, 'W', [1], files={'P/model.py': 'same bytes\n', 'Q/model.py': 'same bytes\n'})
+    finish(root, 3, 'A', [2], action='wait', recommendation='W002-I001')
+    before = {path: path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    projection = ui_view.candidate_projection(root, 3)
+    reader = ui_view.Reader(root)
+    card = ui_view.result_card(reader, 3, projection=projection)
+    assert card['chosen']['id'] == 'P' and card['chosen']['indexed']
+    assert card['chosen']['label'] == 'P' and card['chosen']['metric'] == '0.8'
+    rows = ui_view.candidate_rows(projection, recommended=card['chosen']['id'])['groups'][0]['rows']
+    assert [row['marks'] for row in rows] == [['recommended'], []]
+    member = ui_view.candidate_file(reader, card['chosen'], projection)
+    assert member['name'] == 'P/model.py'
+    assert reader.node(2)['seal']['materials'][member['index'] - 1]['path'].endswith('/P/model.py')
+    assert ui_view.resolve_candidate(root, reader.node(3)['job'], 'W002-I002', strict=True) == 'Q'
+    with pytest.raises(ValueError, match='no unique frozen candidate binding'):
+        ui_view.resolve_candidate(root, reader.node(3)['job'], 'W002-I099', strict=True)
+    assert before == {path: path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    # Re-observation can repeat an identical binding; equal bytes at P/Q still
+    # remain different originals because their material identities differ.
+    bindings = history.candidate_materials(root, projection['subject'])
+    monkeypatch.setattr(history, 'candidate_materials', lambda root, job: bindings * 2)
+    assert ui_view.candidate_file(reader, card['chosen'], projection)['name'] == 'P/model.py'
+    assert ui_view.resolve_candidate(root, reader.node(3)['job'], 'W002-I002', strict=True) == 'Q'
+
+
+def test_audit_facts_verify_receipts_and_candidate_artifact_scope(tmp_path):
+    from scidiscovery.research_loop import candidate_audit, contracts as c
+    from test_candidate_audit import audit_fixture, request
+    root = audit_fixture(tmp_path)
+    job, payload = request(root)
+    assert candidate_audit.execute(root, job, payload) is None
+    following = c.build_job(root, 4, 'A', [1, 2, 3])
+    projection = ui_view.candidate_projection(root, 4, job=following)
+    before = {path: path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    facts = ui_view.audit_facts(root, projection)
+    assert facts['run-1'] == '公开审计已完成；候选文件归属未知' and facts['__recorded__']
+    assert before == {path: path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    # Adapter completion does not qualify a different or unbound artifact.
+    unknown = dict(projection, records=[])
+    assert ui_view.audit_facts(root, unknown)['run-1'] == '公开审计已完成；候选文件归属未知'
+    artifact = c.read(candidate_audit._directory(root, 3) / 'binding.json')['source']['objects']['artifact']
+    matched = dict(projection, records=[dict(observation=dict(contexts=[dict(status='known_success',
+        candidate_id='run-1', model=dict(artifact, retention='archived'))]))])
+    assert ui_view.audit_facts(root, matched)['run-1'] == '公开审计通过'
+    path = candidate_audit._directory(root, 3) / 'adapter-result.json'
+    value = c.read(path); value['status'] = 'rejected'; c.write(path, value)
+    with pytest.raises(ValueError):
+        ui_view.audit_facts(root, projection)

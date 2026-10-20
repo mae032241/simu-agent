@@ -112,11 +112,12 @@ function connect() {
         const slot = document.getElementById(id);
         if (!slot || rendered.get(id) === markup) continue;
         const drafts = Array.from(slot.querySelectorAll('form[data-live-draft]'));
-        // A reader's own expanded/collapsed rounds survive a live refresh.
-        const rounds = new Map(Array.from(slot.querySelectorAll('details[data-round]')).map(item => [item.dataset.round, item.open]));
+        // Preserve a reader's disclosures only for the same round or instance.
+        const disclosures = new Map(Array.from(slot.querySelectorAll('details[data-details-key]')).map(item => [item.dataset.detailsKey, item.open]));
         const focused = slot.contains(document.activeElement) ? document.activeElement : null;
+        const focusKey = focused?.dataset.liveFocus;
         slot.innerHTML = markup; rendered.set(id, markup);
-        for (const item of slot.querySelectorAll('details[data-round]')) if (rounds.has(item.dataset.round)) item.open = rounds.get(item.dataset.round);
+        for (const item of slot.querySelectorAll('details[data-details-key]')) if (disclosures.has(item.dataset.detailsKey)) item.open = disclosures.get(item.dataset.detailsKey);
         for (const draft of drafts) {
           const action = draft.getAttribute('action');
           const trigger = draft.querySelector('[name=ack_correction]')?.value;
@@ -126,7 +127,6 @@ function connect() {
             // Keep the actual editable controls and their draft text. Hidden
             // bindings below receive this snapshot's current nonce/CSRF.
             replacement.replaceWith(draft);
-            focused?.focus({preventScroll:true});
           } else {
             // The action ceased to apply. Preserve its text separately while
             // the live hero continues following authoritative state.
@@ -136,6 +136,10 @@ function connect() {
             shelf.appendChild(draft);
           }
         }
+        // Replaced timeline controls regain focus by exact component identity.
+        // No focus is moved when the reader was elsewhere or the node vanished.
+        const restoredFocus = focused?.isConnected ? focused : focusKey && Array.from(slot.querySelectorAll('[data-live-focus]')).find(item => item.dataset.liveFocus === focusKey);
+        restoredFocus?.focus({preventScroll:true});
       }
       for (const form of document.querySelectorAll('form[action]')) {
         const action = form.getAttribute('action').split('/').pop();
