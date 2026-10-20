@@ -1,0 +1,69 @@
+"""Workbench components escape author text and render empty/error states inline."""
+from scidiscovery.research_loop import ui_components as ui, ui_view
+
+
+XSS = '<script>alert(1)</script><img src=x onerror=alert(2)>'
+
+
+def test_every_component_escapes_author_text_and_only_safe_markup_passes():
+    assert ui.esc(XSS) == '&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src=x onerror=alert(2)&gt;'
+    assert ui.esc(ui.Safe('<b>host</b>')) == '<b>host</b>' and ui.esc(None) == ''
+    assert ui.link(XSS, '/x?a="b"') == '<a href="/x?a=&quot;b&quot;">' + ui.esc(XSS) + '</a>'
+    line = dict(step=2, role='W', role_label='W · 实验', state='seal_present_unverified', state_label='已有阶段结论',
+                sealed=True, one_line=XSS, facts=[dict(label='候选', value=XSS, title=XSS)],
+                links=[dict(label=XSS, href='/results/2')], candidate_rows=[dict(id='local-1', label=XSS, metric=1.5,
+                evaluation_key=XSS, status='ok')], mechanisms=[dict(label=XSS, minimal_test=XSS)])
+    status = dict(state='completed', badge='已完成', headline=XSS, stage=XSS)
+    rows = ui_view.candidate_rows(dict(index=[dict(id='local-1', label=XSS, metric=0.5, evaluation_key=XSS,
+                                                   direction=XSS, observation_step=2, status='ok')],
+                                       graph={}, references={'local-1': XSS}))
+    card = dict(step=3, kind='closeout', decision=XSS, delivery_state='recommended', delivery_label='已推荐未交付',
+                chosen=dict(label=XSS, metric='0.5', evaluation_key=XSS, direction=XSS, step=2, reference=XSS),
+                summary=XSS, reason=XSS, criteria_change=dict(status='revised', label='准则已修订',
+                details=[dict(label='原准则', text=XSS)]), goal_completion=XSS, unmet=[XSS], unmet_omitted=0)
+    rendered = [ui.role_line(line, expanded=True), ui.hero({}, status, attention=[dict(text=XSS, href='/x', action=XSS)], notices=[XSS]),
+                ui.candidate_table(rows), ui.result_card(card),
+                ui.understanding([XSS]), ui.activity(dict(step=1, role_label=XSS, elapsed=XSS, label=XSS, messages=[XSS], href='/p')),
+                ui.instance_card(dict(heading=XSS, path=XSS, retry='/instances', error=dict(kind=XSS, message=XSS))),
+                ui.trail(dict(rounds=[dict(index=1, summary=XSS, steps=[2], h=None, w=[line], a=[], others=[])], omitted=0))]
+    for markup in rendered:
+        assert '<script>' not in markup and '<img' not in markup and 'onerror=alert' not in markup.replace('onerror=alert(2)&gt;', '')
+        assert '&lt;script&gt;' in markup
+
+
+def test_empty_and_error_states_render_inline_without_failing_the_page():
+    failure = ui_view.failure(ValueError('Ledger malformed'))
+    assert ui.stats(failure).startswith('<div class="stats"><p class="inline-error"')
+    assert 'ValueError' in ui.stats(failure) and 'Ledger malformed' in ui.trail(failure)
+    assert '还没有开始研究' in ui.trail(dict(rounds=[], omitted=0))
+    assert '还没有已观察的候选方案' in ui.candidate_table(dict(total=0, groups=[], limit=20))
+    assert ui.activity(None) == '' and 'ValueError' in ui.activity(failure)
+    assert 'ValueError' in ui.result_card(failure) and 'ValueError' in ui.candidate_table(failure)
+    card = ui.instance_card(dict(heading='实例 1 · x', path='/p', retry='/instances', error=dict(kind='OSError', message='busy')))
+    assert '无法读取此实例：OSError：busy' in card and 'href="/instances"' in card and '重试' in card
+    assert '状态暂不可用' not in card
+
+
+def test_stat_cards_mark_overrun_red_and_percent_bar_is_bounded():
+    usage = ui_view.usage_stats(dict(budget=dict(max_tokens=5000000), usage=dict(observed_tokens=5846087)))
+    html = ui.stat(usage['tokens'])
+    assert 'class="stat over"' in html and '<strong>584.6 万</strong>' in html and ' / 500 万</span>' in html
+    assert 'value="100"' in html and 'meter over' in html and '117%' in html and '已观测用量超出上限 84.6 万' in html
+    assert 'class="stat"' in ui.stat(ui_view.usage_stats({})['time'])
+
+
+def test_candidate_table_is_grouped_neutral_and_keeps_every_row_reachable():
+    index = [dict(id=f'local-{number:02d}', label=f'c{number}', evaluation_key='test' if number in (2, 24) else 'val',
+                  metric=None if number == 3 else number / 10, status='failed' if number == 4 else 'ok', observation_step=2)
+             for number in range(1, 26)]
+    rows = ui_view.candidate_rows(dict(index=index, graph={}, references={}), recommended='local-07', delivered='local-07')
+    html = ui.candidate_table(rows)
+    assert html.count('<tr data-order=') + html.count('<tr class="extra" data-order=') == 25
+    assert html.count('class="extra"') == 3 and '显示全部 25 条（另 3 条）' in html
+    assert html.index('口径：val') < html.index('口径：test')
+    assert html.count('仅按此口径数值排序，不代表科学排序。') == 2 and html.count('data-sort-note hidden') == 2
+    assert 'mark-recommended' in html and 'mark-delivered' in html and 'mark-failed' in html
+    assert '最佳' not in html and 'best' not in html.lower()
+    order = [int(value) for value in __import__('re').findall(r'data-order="(\d+)"', html)]
+    val, test = order[:23], order[23:]
+    assert val == sorted(val) and test == sorted(test)

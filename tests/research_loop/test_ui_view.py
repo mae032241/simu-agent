@@ -178,7 +178,11 @@ def test_candidate_rows_keep_observation_order_groups_marks_and_missing_values()
     assert by_id['local-07']['marks'] == ['recommended', 'delivered'] and by_id['local-06']['marks'] == ['failed']
     assert by_id['local-01']['audit'] == '公开审计通过' and by_id['local-08']['audit'] == '未审计'
     assert by_id['local-01']['reference'] == 'W002-C001/model.pkl'
-    assert [row['extra'] for row in sorted(rows, key=lambda row: row['order'])] == [False] * 20 + [True] * 5
+    assert not any(row['extra'] for row in rows)  # Every group is within its default 20 rows.
+    single = ui_view.candidate_rows(dict(index=[dict(row, evaluation_key='val') for row in index], graph=graph, references={}),
+                                    recommended='local-25')
+    flags = [row['extra'] for row in single['groups'][0]['rows']]
+    assert flags == [False] * 20 + [True] * 4 + [False]  # A marked row is never hidden by default.
     assert not any('best' in json.dumps(row) or '最佳' in json.dumps(row, ensure_ascii=False) for row in rows)
 
 
@@ -204,6 +208,8 @@ def test_projection_and_result_card_read_sealed_fixture_without_writes(tmp_path)
     (item,) = value['trail']['rounds']
     assert item['index'] == 1 and item['outcome'] == '结束探索' and item['h']['one_line'] == 'First <script>plan</script>'
     assert value['candidates'] == dict(count=0, partial=False, recommended=False, delivered=False)
+    again = ui_view.project(root, view, final_step=2, memo={})
+    assert again['trail'] == value['trail']
     assert value['used_steps'] == 2
     card = ui_view.result_card(ui_view.Reader(root), 2, closeout=view.get('closeout'))
     assert card['delivery_state'] == 'none' and card['delivery_label'] == '未推荐' and card['chosen'] is None
@@ -240,3 +246,26 @@ def test_retained_real_sample_projection_matches_acceptance_facts():
     member = ui_view.candidate_file(reader, card['chosen'], projection)
     assert member['sha256'] == view['closeout']['last_confirmed']['artifact_sha256']
     assert before == {path: path.stat().st_mtime_ns for path in root.rglob('*') if path.is_file()}
+
+
+def test_delivery_state_uses_control_records_and_open_submissions_outrank_old_confirmations():
+    confirmed = dict(last_confirmed=dict(candidate_id='local-a'), current_actual=dict(candidate_id='local-a'), status='delivery_confirmed')
+    assert ui_view._delivery_state(confirmed, 'local-a', 'ref') == ('confirmed', '已确认交付')
+    assert ui_view._delivery_state(confirmed, 'local-b', 'ref') == ('recommended', '已推荐未交付')
+    assert ui_view._delivery_state(confirmed, None, None) == ('none', '未推荐')
+    pending = dict(confirmed, current_actual='unknown', status='delivery_unknown')
+    assert ui_view._delivery_state(pending, 'local-a', 'ref') == ('unknown', '交付状态未知')
+    assert ui_view._delivery_state(dict(status='delivery_confirmation_pending'), 'local-a', 'ref')[0] == 'unknown'
+    assert ui_view._delivery_state(None, 'local-a', 'ref', unresolved_reference=True)[0] == 'unknown'
+
+
+def test_reader_memo_reuses_only_unchanged_verified_originals(tmp_path):
+    root, _ = prepare(tmp_path, enabled=False)
+    finish(root, 1, 'H', [], action='experiment', summary='Plan')
+    memo = {}
+    first = ui_view.Reader(root, memo).node(1)
+    assert ui_view.Reader(root, memo).node(1) is first
+    original = root / 'native-evidence/001/science-output.json'
+    original.chmod(0o600); original.write_bytes(original.read_bytes() + b' ')
+    with pytest.raises(ValueError):
+        ui_view.Reader(root, memo).node(1)

@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
+from pathlib import Path
 import re
 import time
 
-from . import contracts as c
+from . import contracts as c, execution
 from . import instance_science as science
 from . import public_output
 
@@ -162,14 +164,46 @@ def cleaner(root):
 class Reader:
     """Verified sealed originals for one snapshot; memoized, never written."""
 
-    def __init__(self, root):
+    def __init__(self, root, memo=None):
         self.root = root
         self._nodes = {}
         self._observations = {}
         self._roles = {}
+        # Optional cross-snapshot memo of verified sealed reads. An entry is
+        # reused only while every file it was verified from keeps its exact
+        # (inode, size, mtime, ctime) identity; any change re-verifies.
+        self._memo = memo
+
+    def _identity(self, paths):
+        rows = []
+        for path in paths:
+            info = os.stat(path, follow_symlinks=False)
+            rows.append((str(path), info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+        return tuple(rows)
+
+    def _remembered(self, key, paths):
+        if self._memo is None:
+            return None
+        entry = self._memo.get(key)
+        try:
+            if entry is not None and entry[0] == self._identity(entry[2]):
+                return entry[1]
+        except OSError:
+            pass
+        return None
+
+    def _remember(self, key, paths, value):
+        if self._memo is not None:
+            if len(self._memo) > 2048:
+                self._memo.clear()
+            self._memo[key] = (self._identity(paths), value, tuple(paths))
 
     def node(self, step):
         if step not in self._nodes:
+            remembered = self._remembered(('node', step), ())
+            if remembered is not None:
+                self._nodes[step] = remembered
+                return remembered
             _, seal, raw, proof = science._sealed(self.root, step)
             job_path = self.root / 'jobs' / f'{step:03d}.json'
             job = science._json(job_path, science._proof(job_path, seal['job_sha256']))
@@ -179,6 +213,8 @@ class Reader:
             if not isinstance(payload, dict):
                 raise ValueError('Sealed scientific output is not an object')
             self._nodes[step] = dict(job=job, payload=payload, seal=seal)
+            self._remember(('node', step), (execution.origin(self.root, step) / 'result-identity.json', job_path, Path(raw)),
+                           self._nodes[step])
         return self._nodes[step]
 
     def observation(self, step):
@@ -191,9 +227,14 @@ class Reader:
                 if receipt.get('path') != f'host-history/observations/{step:03d}.json':
                     raise ValueError('Observation receipt escaped its sealed node')
                 path = self.root / receipt['path']
+                remembered = self._remembered(('observation', step, receipt['sha256']), ())
+                if remembered is not None:
+                    self._observations[step] = remembered
+                    return remembered
                 value = science._json(path, science._proof(path, receipt['sha256']))
                 if value['binding']['source_sha256'] != node['seal']['raw_sha256']:
                     raise ValueError('Observation differs from its sealed conclusion')
+                self._remember(('observation', step, receipt['sha256']), (path,), value)
             self._observations[step] = value
         return self._observations[step]
 
@@ -203,20 +244,35 @@ class Reader:
         return self._roles[step]
 
 
+def clean_row(row, clean):
+    """Observer candidate facts with author text passed through the public cleaner."""
+    value = dict(row)
+    for key, limit in (('label', 300), ('evaluation_key', 300), ('direction', 200), ('status', 60)):
+        if isinstance(value.get(key), str):
+            value[key] = clean(value[key], limit)
+    return value
+
+
 def accepted_calls(observation):
     if observation is None:
         return None
     return sum(1 for call in observation.get('managed_calls', []) if isinstance(call, dict) and call.get('accepted'))
 
 
-def resolve_candidate(root, job, value, references=None):
-    """Author reference -> canonical id via frozen task mapping; never inferred."""
+def resolve_candidate(root, job, value, references=None, *, strict=False):
+    """Author reference -> canonical id via frozen task mapping; never inferred.
+
+    ``strict`` raises when the frozen mapping rejects the reference instead of
+    displaying the author's raw text as if it were an identity.
+    """
     if not isinstance(value, str):
         return None
     from . import candidate_refs
     try:
         resolved = candidate_refs.resolve_reference(root, job, value)
     except ValueError:
+        if strict:
+            raise
         resolved = value
     if references and resolved not in references:
         inverse = {ref: identity for identity, ref in references.items()}
@@ -335,7 +391,7 @@ def role_line(reader, node, clean, *, mechanisms=None, labels=None, references=N
     elif role == 'W':
         observation = reader.observation(step)
         calls = accepted_calls(observation)
-        rows = [row for row in (observation or {}).get('candidates', []) if isinstance(row, dict)]
+        rows = [clean_row(row, clean) for row in (observation or {}).get('candidates', []) if isinstance(row, dict)]
         line['experiments'] = calls
         line['candidate_rows'] = rows
         facts.append(dict(label='本阶段实验', value=(str(calls) + ' 次') if calls is not None else '未记录', title=EXPERIMENT_TOOLTIP))
@@ -387,10 +443,14 @@ def role_line(reader, node, clean, *, mechanisms=None, labels=None, references=N
 
 def _round_summary(item):
     parts = ['第 ' + str(item['index']) + ' 轮' if item['index'] else '准备', item['outcome']]
-    if item['w']:
-        experiments = [line.get('experiments') for line in item['w']]
+    sealed = [line for line in item['w'] if line.get('sealed')]
+    if sealed:
+        experiments = [line.get('experiments') for line in sealed]
         known = [value for value in experiments if value is not None]
         parts.append('W ' + (str(sum(known)) if known else '?') + ' 次实验' + ('（部分未记录）' if len(known) != len(experiments) else ''))
+    if len(sealed) != len(item['w']):
+        parts.append('W 进行中')
+    if item['w']:
         rows = [row for line in item['w'] for row in line.get('candidate_rows', [])]
         extreme = _candidate_extreme(rows)
         if extreme:
@@ -523,8 +583,8 @@ def usage_stats(view, *, used_steps=None, candidates=None):
     closeout = view.get('closeout') or {}
     observed = usage.get('observed_tokens')
     limit = budget.get('max_tokens')
-    tokens = dict(label='模型用量', value=fmt_tokens(observed), limit=fmt_tokens(limit) if limit else '未记录',
-                  raw=observed, raw_limit=limit, unit='tokens', notes=[])
+    tokens = dict(label='模型用量（tokens）', value=fmt_tokens(observed), limit=fmt_tokens(limit) if limit else '未记录',
+                  raw=observed, raw_limit=limit, notes=[])
     tokens['percent'] = percent(observed, limit)
     overrun = closeout.get('final_overrun') if isinstance(closeout.get('final_overrun'), dict) else None
     over = observed is not None and limit and observed > limit
@@ -556,6 +616,8 @@ def usage_stats(view, *, used_steps=None, candidates=None):
     candidates = candidates or {}
     count = candidates.get('count')
     card = dict(label='候选方案', value=str(count) if count is not None else '未记录', limit=None, raw=count, notes=[])
+    if candidates.get('unreadable'):
+        card['notes'].append(str(candidates['unreadable']) + ' 个阶段的观察不可读，计数为下界')
     if candidates.get('partial'):
         card['notes'].append('最近 ' + str(WINDOW) + ' 个阶段内')
     if candidates.get('recommended'):
@@ -567,21 +629,22 @@ def usage_stats(view, *, used_steps=None, candidates=None):
 
 # ---------------------------------------------------------------- overview projection
 
-def project(root, view, *, final_step=None, objective=None):
+def project(root, view, *, final_step=None, objective=None, memo=None):
     """One snapshot projection. Called inside the shared snapshot cache."""
     clean = cleaner(root)
-    reader = Reader(root)
+    reader = Reader(root, memo)
     nodes = list(view.get('nodes') or [])
     steps = [node['step'] for node in nodes]
     mechanisms = guarded(mechanism_labels, reader, range(1, (steps[-1] if steps else 0) + 1))
     mechanisms = {} if 'error' in mechanisms else mechanisms
-    labels, references, candidate_ids, observed_any = {}, {}, [], False
+    labels, references, candidate_ids, observed_any, unreadable = {}, {}, [], False, []
     for node in nodes:
         if node['role'] != 'W' or node.get('state') not in SEALED:
             continue
         try:
             observation = reader.observation(node['step'])
-        except Exception:  # noqa: BLE001 - shown on that node's role line
+        except Exception:  # noqa: BLE001 - shown on that node's role line and counted below
+            unreadable.append(node['step'])
             continue
         if observation is None:
             continue
@@ -590,7 +653,8 @@ def project(root, view, *, final_step=None, objective=None):
             if isinstance(row, dict) and isinstance(row.get('id'), str):
                 if row['id'] not in labels:
                     candidate_ids.append(row['id'])
-                labels.setdefault(row['id'], row.get('label') or row['id'].rsplit('-', 1)[-1][:12])
+                labels.setdefault(row['id'], clean(row['label'], 300) if isinstance(row.get('label'), str) and row['label']
+                                  else row['id'].rsplit('-', 1)[-1][:12])
     try:
         from . import candidate_refs
         records = [dict(step=node['step'], role=node['role'], observation=reader.observation(node['step']))
@@ -614,6 +678,8 @@ def project(root, view, *, final_step=None, objective=None):
     candidates = dict(count=len(candidate_ids) if observed_any or nodes else None,
                       partial=bool(nodes) and nodes[0]['step'] > 1,
                       recommended=recommended is not None, delivered=confirmed is not None)
+    if unreadable:
+        candidates['unreadable'] = len(unreadable)
     used_steps = closeout.get('used_steps') if isinstance(closeout.get('used_steps'), int) else (steps[-1] if steps else 0)
     materials = sum(line.get('materials') or 0 for item in ([] if 'error' in trail else trail['rounds'])
                     for line in [item['h'], *item['w'], *item['a'], *item['others']] if line)
@@ -625,16 +691,20 @@ def project(root, view, *, final_step=None, objective=None):
 
 # ---------------------------------------------------------------- results
 
-def _delivery_state(closeout, chosen, recommended_value):
-    confirmed = (closeout or {}).get('last_confirmed') or {}
-    if confirmed.get('candidate_id') and (chosen is None or confirmed['candidate_id'] == chosen):
-        return 'confirmed', '已确认交付'
+UNRESOLVED_DELIVERY = {'delivery_unknown', 'delivery_confirmation_pending'}
+
+
+def _delivery_state(closeout, chosen, recommended_value, *, unresolved_reference=False):
+    """Control delivery records only; an open submission outranks an older confirmation."""
+    closeout = closeout or {}
     if recommended_value is None:
         return 'none', '未推荐'
-    if closeout and closeout.get('status') in {'delivery_failed', 'unknown'}:
+    actual = closeout.get('current_actual')
+    if unresolved_reference or actual == 'unknown' or closeout.get('status') in UNRESOLVED_DELIVERY:
         return 'unknown', '交付状态未知'
-    if closeout and closeout.get('current_actual') and (closeout['current_actual'] or {}).get('status') not in {None, 'confirmed'}:
-        return 'unknown', '交付状态未知'
+    confirmed = (closeout.get('last_confirmed') or {}).get('candidate_id')
+    if chosen is not None and confirmed == chosen:
+        return 'confirmed', '已确认交付'
     return 'recommended', '已推荐未交付'
 
 
@@ -650,12 +720,16 @@ def candidate_projection(root, before_step):
                 records=value['records'])
 
 
-def candidate_rows(projection, *, recommended=None, delivered=None, audits=None, mechanisms=None):
+def candidate_rows(projection, *, recommended=None, delivered=None, audits=None, mechanisms=None, clean=None):
     """First-observation order; grouped by evaluation_key; no ranking or default."""
+    clean = clean or (lambda text, limit=16384: text)
+    def text(value, limit=300):
+        return None if value is None else clean(str(value), limit)
     graph = projection['graph']
     labels = {ref: item.get('label') for ref, item in (graph.get('mechanisms') or {}).items() if isinstance(item, dict)}
     labels.update({key: value for key, value in (mechanisms or {}).items() if key not in labels})
-    audits = audits or {}
+    audits_recorded = audits is not None and audits.get('__recorded__', bool(audits))
+    audits = {key: value for key, value in (audits or {}).items() if key != '__recorded__'}
     rows, groups = [], {}
     for order, item in enumerate(projection['index'], 1):
         identity = item['id']
@@ -672,19 +746,22 @@ def candidate_rows(projection, *, recommended=None, delivered=None, audits=None,
             marks.append('failed')
         audit = audits.get(identity)
         row = dict(order=order, id=identity,
-                   label=item.get('label') or identity.rsplit('-', 1)[-1][:12],
-                   mechanism=labels.get(ref, ref) if ref else '未关联',
-                   metric=item.get('metric'), metric_text=fmt_metric(item.get('metric')),
-                   evaluation_key=item.get('evaluation_key') if item.get('evaluation_key') is not None else '未声明',
-                   direction=item.get('direction'),
+                   label=text(item.get('label')) or identity.rsplit('-', 1)[-1][:12],
+                   mechanism=text(labels.get(ref, ref)) if ref else '未关联',
+                   metric=item.get('metric'), metric_text=text(fmt_metric(item.get('metric')), 80),
+                   evaluation_key=text(item.get('evaluation_key')) if item.get('evaluation_key') is not None else '未声明',
+                   direction=text(item.get('direction'), 200),
                    step=item.get('observation_step'),
-                   audit=audit or '未审计',
+                   audit=audit or ('未审计' if audits_recorded else '未记录'),
                    status={'ok': '成功', 'failed': '失败', 'unknown': '未知'}.get(status, status or '未知'),
-                   marks=marks, reference=projection['references'].get(identity))
+                   marks=marks, reference=text(projection['references'].get(identity)))
         rows.append(row)
         groups.setdefault(row['evaluation_key'], []).append(row)
-    for index, row in enumerate(rows):
-        row['extra'] = index >= CANDIDATE_LIMIT
+    # The first CANDIDATE_LIMIT rows of every group show by default; marked
+    # (author-recommended, delivered, failed) rows always stay visible.
+    for group in groups.values():
+        for index, row in enumerate(group):
+            row['extra'] = index >= CANDIDATE_LIMIT and not row['marks']
     return dict(total=len(rows), groups=[dict(key=key, rows=value) for key, value in groups.items()],
                 limit=CANDIDATE_LIMIT,
                 recommended=recommended, delivered=delivered)
@@ -698,6 +775,8 @@ def audit_facts(closeout):
     for member in selection.get('members') or []:
         if isinstance(member, dict) and isinstance(member.get('candidate_id'), str) and member.get('audit') is not None:
             result[member['candidate_id']] = names.get(member['audit'], str(member['audit']))
+    # Without a control selection record, absence means "not recorded", not "not audited".
+    result['__recorded__'] = bool(selection.get('members'))
     return result
 
 
@@ -707,7 +786,11 @@ def result_card(reader, step, *, closeout=None, projection=None, goal_completion
     job, payload, seal = sealed['job'], sealed['payload'], sealed['seal']
     references = (projection or {}).get('references') or {}
     value = payload.get('candidate_recommendation')
-    chosen = resolve_candidate(reader.root, job, value, references) if value is not None else None
+    resolution_error = None
+    try:
+        chosen = resolve_candidate(reader.root, job, value, references, strict=True) if value is not None else None
+    except ValueError as error:
+        chosen, resolution_error = None, clean(str(error), 300)
     if closeout and (closeout.get('existing_A_recommendation') or {}).get('author_step') == step:
         chosen = closeout['existing_A_recommendation'].get('candidate_id') or chosen
     index = {item['id']: item for item in (projection or {}).get('index') or []}
@@ -720,7 +803,7 @@ def result_card(reader, step, *, closeout=None, projection=None, goal_completion
                          evaluation_key=clean(str(item['evaluation_key']), 300) if item and item.get('evaluation_key') is not None else '未声明',
                          direction=clean(str(item['direction']), 200) if item and item.get('direction') else None,
                          step=(item or {}).get('observation_step'), indexed=item is not None)
-    delivery, delivery_label = _delivery_state(closeout, chosen, value)
+    delivery, delivery_label = _delivery_state(closeout, chosen, value, unresolved_reference=resolution_error is not None)
     explanation = payload.get('selection_explanation') if isinstance(payload.get('selection_explanation'), dict) else None
     reason = first_sentence((explanation or {}).get('criteria'), 400) or first_sentence(payload.get('route_reason'), 400)
     change = (explanation or {}).get('criteria_change') if isinstance((explanation or {}).get('criteria_change'), dict) else None
@@ -739,6 +822,7 @@ def result_card(reader, step, *, closeout=None, projection=None, goal_completion
                 summary=clean(payload['summary'], 1200) if isinstance(payload.get('summary'), str) else '未记录摘要',
                 delivery_state=delivery, delivery_label=delivery_label, chosen=candidate,
                 recommendation_raw=clean(value, 300) if isinstance(value, str) else None,
+                resolution_error=resolution_error,
                 reason=clean(reason, 400) if reason else '未记录',
                 criteria_change=criteria_change,
                 unmet=limitations[:3], unmet_omitted=max(0, len(limitations) - 3),

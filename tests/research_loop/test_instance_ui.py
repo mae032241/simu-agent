@@ -86,7 +86,8 @@ def test_final_results_follow_exact_sealed_terminal_route(tmp_path):
     page = ui.get('/final-results', host=ui.host, cookie=cookie)[1].decode()
     assert '研究发现' in page and '/nodes/2/science' in page
     overview = ui.get('/', host=ui.host, cookie=cookie)[1].decode()
-    assert '最终结论已返回' in overview and '查看最终结果' in overview
+    assert '已完成' in overview and 'href="/final-results" class="primary">查看结果</a>' in overview
+    assert '第 1 轮 · A 决定结束探索' in overview
 
 
 @pytest.mark.parametrize('active', [False, True])
@@ -676,13 +677,13 @@ await waitFor(`document.querySelector('[data-stream-status]')?.textContent.inclu
 if ((await evaluate(`document.querySelector('[data-events]').textContent`)).includes('Second phase public output')) throw new Error('Historical output followed a newer node');
 await call('Page.navigate', {url:origin+'/instances/1/'});
 await waitFor(`document.getElementById('live-hero')?.innerText.includes('第 2 阶段') && document.querySelector('[data-live-url]')?.dataset.state==='connected'`);
-await evaluate(`window.liveDraftSentinel='preserved';document.querySelector('details.secondary').open=true;document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value='4321';document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value='Keep this unsent budget explanation';true`);
+await evaluate(`window.liveDraftSentinel='preserved';document.querySelector('details.more-actions').open=true;document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value='4321';document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value='Keep this unsent budget explanation';true`);
 await writeFile(process.env.SCID_TEST_ADVANCE, '3');
-await waitFor(`document.getElementById('live-hero')?.innerText.includes('第 3 阶段') && document.getElementById('live-usage')?.innerText.includes('30 / 1234 tokens') && document.getElementById('live-conclusion')?.innerText.includes('Third browser phase conclusion')`);
+await waitFor(`document.getElementById('live-hero')?.innerText.includes('第 3 阶段') && document.getElementById('live-usage')?.innerText.includes('30 / 1,234') && document.getElementById('live-trail')?.innerText.includes('Third browser phase conclusion')`);
 if (!(await evaluate(`window.liveDraftSentinel==='preserved' && document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value==='4321' && document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value==='Keep this unsent budget explanation'`))) throw new Error('Live dashboard lost typed values or reloaded');
 await screenshot('live-dashboard-draft-preserved');
 await call('Page.navigate', {url:origin+'/'});
-await waitFor(`document.getElementById('live-instances')?.innerText.includes('第 3 阶段') && document.getElementById('live-instances')?.innerText.includes('30 / 1234 tokens')`);
+await waitFor(`document.getElementById('live-instances')?.innerText.includes('第 3 阶段') && document.getElementById('live-instances')?.innerText.includes('30 / 1,234 tokens')`);
 await screenshot('live-workbench-loaded-status');
 await call('Page.navigate', {url:origin+'/instances/1/progress'});
 await writeFile(process.env.SCID_TEST_ADVANCE, '4');

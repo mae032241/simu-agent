@@ -42,13 +42,13 @@ def test_http_sse_initial_change_reconnect_and_exact_read_scope(tmp_path):
         try:
             initial = snapshot(response)
             assert initial['current'] is None
-            assert '可以开始研究' in initial['fragments']['live-hero']
+            assert '未开始' in initial['fragments']['live-hero'] and 'action="/control/start"' in initial['fragments']['live-hero']
             finish(root, 1, 'H', [], action='analyze', summary='First retained finding')
             changed = snapshot(response)
             assert changed['current']['step'] == 1
             assert changed['current']['url'] == '/nodes/1/events?attempt=0'
-            assert 'First retained finding' in changed['fragments']['live-conclusion']
-            assert '10 / 4000 tokens' in changed['fragments']['live-usage']
+            assert 'First retained finding' in changed['fragments']['live-trail']
+            assert '<strong>10</strong><span class="stat-limit"> / 4,000</span>' in changed['fragments']['live-usage']
         finally:
             response.close(); client.close()
         finish(root, 2, 'A', [1], summary='Needs a missing measurement')
@@ -58,7 +58,7 @@ def test_http_sse_initial_change_reconnect_and_exact_read_scope(tmp_path):
         try:
             resumed = snapshot(response)
             assert resumed['current']['step'] == 2
-            assert '等待补充条件' in resumed['fragments']['live-hero']
+            assert '等待条件' in resumed['fragments']['live-hero'] and '需要你处理' in resumed['fragments']['live-hero']
             assert 'action="/control/start"' not in resumed['fragments']['live-hero']
             assert 'action="/control/continue"' in resumed['fragments']['live-hero']
         finally:
@@ -93,17 +93,17 @@ def test_workspace_loaded_state_and_mounted_stream(tmp_path):
         try:
             initial = snapshot(response)
             assert 'action="/instances/1/control/start"' in initial['fragments']['live-hero']
-            assert 'href="/instances/1/' in initial['fragments']['live-conclusion'] or initial['current'] is None
+            assert 'href="/instances/1/' in initial['fragments']['live-trail'] or initial['current'] is None
             finish(root, 1, 'H', [], action='analyze')
             changed = snapshot(response)
             assert changed['current']['url'] == '/instances/1/nodes/1/events?attempt=0'
-            assert 'href="/instances/1/results/1"' in changed['fragments']['live-conclusion']
+            assert 'href="/instances/1/results/1"' in changed['fragments']['live-trail']
         finally:
             response.close(); client.close()
         client, response = stream(url, '/live', cookie)
         try:
             loaded = snapshot(response)['fragments']['live-instances']
-            assert '第 1 阶段' in loaded and '10 / 4000 tokens' in loaded
+            assert '第 1 阶段' in loaded and '10 / 4,000 tokens' in loaded
         finally:
             response.close(); client.close()
         page = request(connection, 'GET', '/instances/1/progress', cookie=child_cookie)[1]

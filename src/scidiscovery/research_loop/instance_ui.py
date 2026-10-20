@@ -25,6 +25,8 @@ from . import instance_science as science
 from . import instance_render as render
 from . import instance_live as live
 from . import configuration_form, progress, public_output, research_config, user_guidance
+from . import ui_components as ui
+from . import ui_view
 
 
 _ENTRY_SCRIPT = "location.replace('./');"
@@ -77,6 +79,12 @@ class InstanceUI:
         self.live_cache = live.SnapshotCache()
         self.live_stop = threading.Event()
         self.live_gate = threading.BoundedSemaphore(live.MAX_CLIENTS)
+        self.activity_lock = threading.Lock()
+        self.activity = {}
+        # Display-only memo of verified sealed reads (identity-checked per use)
+        # and candidate projections keyed by the instance metadata fingerprint.
+        self.view_memo = {}
+        self.candidate_cache = {}
 
     def _browser(self, cookie, *, scope='maintenance'):
         self.browser.from_cookie(cookie, instance_id=self.instance, scope=scope)
@@ -327,10 +335,27 @@ class InstanceUI:
             'objective' in source and c.regular(source['objective'], limit=256000).read_bytes() != source['task_source'])
 
     @staticmethod
-    def _navigation():
-        return ('<nav><a href="/instances">返回工作台</a><a href="/">总览</a><a href="/progress">实时进度</a>'
-            '<a href="/results">阶段结论</a><a href="/final-results">最终结果</a>'
-            '<a href="/guidance">方向建议</a><a href="/configuration">高级设置</a></nav>')
+    def _navigation(current=None):
+        # Four destinations; every earlier route stays reachable (see /settings).
+        items = (('/', '总览'), ('/results', '研究过程'), ('/final-results', '结果'), ('/settings', '设置'))
+        return ('<nav class="top-nav"><a class="back-link" href="/instances">← 工作台</a>' + ''.join(
+            '<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
+            for href, label in items) + '</nav>')
+
+    def _settings_page(self, token):
+        manager = 'maintenance' in self.browser.verify(token, instance_id=self.instance).scopes
+        rows = [('/guidance', '方向建议', '补充关注点、约束或目标变化；建议不授予执行权限。'),
+                ('/progress', '实时进度', '自动跟随当前阶段的公开工作记录。'),
+                ('/?after=0', '全部阶段记录', '按阶段浏览原有记录页面。')]
+        if manager:
+            rows += [('/configuration', '高级设置', '此实例实际冻结的配置与创建新研究。'),
+                     ('/operations', '控制请求记录', '启动、暂停和预算调整请求的处理情况。')]
+        if self.approvals:
+            rows.append(('/requests', '实验执行请求', '逐项核对与决定实验执行请求。'))
+        body = self._navigation('/settings') + '<section><ul class="settings-list">' + ''.join(
+            '<li>' + ui.link(label, href) + '<p class="note">' + ui.esc(note) + '</p></li>' for href, label, note in rows)
+        body += '</ul>' + ('' if manager else '<p class="note">当前为只读查看；管理入口另有高级设置与控制请求记录。</p>')
+        return 200, self._page('设置', body + '</section>', live=False), {}
 
     def _guidance_page(self, token):
         manager = 'maintenance' in self.browser.verify(token, instance_id=self.instance).scopes
@@ -372,13 +397,6 @@ class InstanceUI:
                 body += '<p>' + html.escape(clean(row['error'])) + '</p>'
             body += '</section>'
         return body or '<p>还没有控制请求。</p>'
-
-    def _recent_results(self, snapshot):
-        body = '<section><h2>最近返回的阶段结论</h2><ul>'
-        for node in reversed(snapshot['view']['nodes']):
-            if node['state'] == 'seal_present_unverified':
-                body += '<li><a href="/results/' + str(node['step']) + '">第 ' + str(node['step']) + ' 阶段 · ' + self._role(node['role']) + '</a></li>'
-        return body + '</ul></section>'
 
     @staticmethod
     def _event_html(item):
@@ -473,7 +491,7 @@ class InstanceUI:
     def _snapshot(self, *, force=False):
         def load():
             latest = self._latest_step()
-            view = control.status(self.root, after=max(0, latest - 20), limit=20, live_feedback=False)
+            view = control.status(self.root, after=max(0, latest - ui_view.WINDOW), limit=ui_view.WINDOW, live_feedback=False)
             conclusion = None
             for node in reversed(view['nodes']):
                 if node['state'] == 'seal_present_unverified':
@@ -485,10 +503,14 @@ class InstanceUI:
                     conclusion = dict(step=node['step'], role=node['role'], ordinary=not job.get('formal_review') and job.get('purpose') != 'closeout', payload=payload)
                     break
             operations = control.operations(self.root)
+            final = self._final_step()
+            # One read-only projection per snapshot; components fail separately.
+            projection = ui_view.guarded(ui_view.project, self.root, view, final_step=final, memo=self.view_memo,
+                                         clean=ui_view.cleaner(self.root))
             return dict(view=view, conclusion=conclusion, operation=operations[-1] if operations else None, operations=operations[-20:],
-                        final=self._final_step())
+                        final=final, ui=projection)
         return self.live_cache.read(self.root, load, force=force, refresh=lambda value:
-            value['view']['budget']['clock_phase'] in {'advance','waiting'} or
+            (value['view'].get('budget') or {}).get('clock_phase') in {'advance','waiting'} or
             any(node['state'] in {'running','waiting','unknown','prepared'} for node in value['view']['nodes'][-1:]) or
             (value['operation'] or {}).get('status') in {'accepted','running'})
 
@@ -504,20 +526,28 @@ class InstanceUI:
         for index, root in enumerate(tuple(self.instance_roots)[:100]):
             if not index and self.workspace:
                 continue
-            child = self._child(index) if index else self
+            heading = '实例 ' + str(index) + ' · ' + root.name
             try:
+                child = self._child(index) if index else self
                 snapshot = child._snapshot(force=force)
                 view = snapshot['view']
-                current = view['nodes'][-1] if view['nodes'] else None
-                state = child._presentation(snapshot, child._receipt(snapshot))
+                status = child._status(snapshot, child._receipt(snapshot))
+                header = (snapshot.get('ui') or {}).get('header') or {}
+                tokens = ui_view.usage_stats(view)['tokens']
                 target = '/instances/' + str(index) + '/manage?token=' + child.management_token if index else '/'
-                rows.append('<article><h3><a href="' + html.escape(target, quote=True) + '">实例 ' + str(index) + ' · ' + html.escape(root.name) + '</a></h3>'
-                    + render.excerpt(public_output.cleaner(root)(view['objective']), 240)
-                    + '<p>' + html.escape(state['title']) + (' · ' + child._role(current['role']) + ' · 第 ' + str(current['step']) + ' 阶段' if current else '')
-                    + '</p><details class="review-full-path"><summary>查看实例完整目录</summary><code>' + html.escape(str(root)) + '</code></details><p class="note">模型用量 ' + str(view['usage']['observed_tokens']) + ' / ' + str(view['budget']['max_tokens']) + ' tokens</p></article>')
-            except (ValueError, OSError, RuntimeError, KeyError, TypeError):
-                rows.append('<article><h3>实例 ' + str(index) + ' · ' + html.escape(root.name) + '</h3><p>状态暂不可用；请核对已有实例。</p></article>')
-        return ''.join(rows) or '<p>还没有加载实例。你可以新建一个，或填写目录加载已有研究。</p>'
+                rows.append(ui.instance_card(dict(
+                    heading=heading, title=header.get('title') or root.name, path=str(root), href=target,
+                    state=status['state'], badge=status['badge'], headline=status['headline'], stage=status.get('stage'),
+                    tokens=dict(percent=tokens['percent'], over=tokens['over'],
+                                text=tokens['value'] + ' / ' + tokens['limit'] + ' tokens'
+                                     + (' · ' + str(tokens['percent']) + '%' if tokens['percent'] is not None else '')))))
+            except Exception as error:  # noqa: BLE001 - one unreadable instance never hides the others
+                # Show the exact failure class and its path-cleaned message.
+                rows.append(ui.instance_card(dict(heading=heading, path=str(root), retry='/instances',
+                    error=ui_view.failure(error, ui_view.cleaner(root))['error'])))
+        if not rows:
+            return '<p>还没有加载实例。你可以新建一个，或填写目录加载已有研究。</p>'
+        return '<div class="instance-cards">' + ''.join(rows) + '</div>'
 
     def _presentation(self, snapshot, receipt):
         view = snapshot['view']
@@ -534,69 +564,173 @@ class InstanceUI:
             '研究正在进行' if active else '可以开始研究' if not current else self._state(state))
         return dict(current=current, state=state, waiting=waiting, completed=completed, active=active, title=title)
 
-    def _dashboard_parts(self, token, snapshot):
-        manager = 'maintenance' in self.browser.verify(token, instance_id=self.instance).scopes
-        view = snapshot['view']; limits, usage = view['budget'], view['usage']
-        receipt = self._receipt(snapshot)
+    def _status(self, snapshot, receipt, *, elapsed=None):
+        """StatusSummary over the existing presentation; no new control semantics."""
+        view = snapshot['view']
         display = self._presentation(snapshot, receipt)
-        current = display['current']; paused = view['paused']
-        clean = public_output.cleaner(self.root)
-        hero = '<section class="hero"><span class="badge">' + html.escape(display['title']) + '</span><h2>' + (self._role(current['role']) + ' · 第 ' + str(current['step']) + ' 阶段' if current else '实例已创建') + '</h2>'
+        projection = snapshot.get('ui') or {}
+        trail = projection.get('trail') or {}
+        rounds = trail.get('rounds') or []
+        clean = ui_view.cleaner(self.root)
+        closeout = view.get('closeout')
+        waiting_reason = None
         if display['waiting']:
             payload = snapshot['conclusion']['payload']
-            hero += '<p>研究者已记录等待结论。请先核对等待原因、补充材料或方向建议，再通过适用的后续操作处理。</p>'
-            hero += render.excerpt(clean(payload.get('route_reason') or payload.get('remaining_question') or payload.get('summary') or '请查看本阶段结论中的等待条件。'), 1600)
-            hero += '<a class="primary" href="/results/' + str(current['step']) + '">查看等待原因与阶段结论</a>'
+            sentence = ui_view.first_sentence(payload.get('route_reason') or payload.get('remaining_question') or payload.get('summary'))
+            waiting_reason = clean(sentence, 300) if sentence else None
+        completed_line = None
+        latest = projection.get('latest_a')
+        if display['completed'] and latest:
+            number = next((item['index'] for item in rounds if latest in item['a']), None)
+            prefix = ('第 ' + str(number) + ' 轮 · ') if number else ''
+            action = latest.get('next_action')
+            if action == 'deliver':
+                label = (projection.get('labels') or {}).get(projection.get('recommended'))
+                completed_line = prefix + 'A 决定交付 ' + (clean(label, 120) if label else '（候选未能对应已观察记录）')
+            elif action:
+                completed_line = prefix + 'A 决定' + ui_view.A_OUTCOMES.get(action, action)
+        used = projection.get('used_steps')
+        status = ui_view.status_summary(display, view,
+            final_phase=closeout is not None and not display['completed'],
+            exhausted=ui_view.exhausted_limits(view, used if isinstance(used, int) else None),
+            waiting_reason=waiting_reason, current_round=rounds[0]['index'] if rounds else None,
+            completed_line=completed_line, elapsed=elapsed, clean=clean)
+        return dict(status, display=display)
+
+    def _activity(self, current):
+        """Latest public messages of the active stage via a bounded forward cursor."""
+        step, attempt = current['step'], current.get('continuations') or 0
+        key = (step, attempt)
+        with self.activity_lock:
+            entry = self.activity.get(key) or dict(cursor=None, messages=[], prepared_at=None, label='')
+            for _ in range(4):  # Catch up at most 4 bounded pages per snapshot.
+                value = self._progress_value(step, attempt, entry['cursor'])
+                if value.get('restart_required'):
+                    entry = dict(cursor=None, messages=[], prepared_at=None, label='')
+                    break
+                entry['label'] = value['progress_label']
+                entry['prepared_at'] = value.get('prepared_at', entry['prepared_at'])
+                texts = [item['text'][:300] for item in value['events'] if item.get('type') == 'message' and item.get('text')]
+                entry['messages'] = (entry['messages'] + texts)[-3:]
+                entry['cursor'] = value.get('cursor') or entry['cursor']
+                if not value.get('has_more'):
+                    break
+            self.activity = {key: entry}
+        return dict(step=step, role_label=ui_view.ROLE_LABELS.get(current['role'], current['role']),
+                    elapsed=ui_view.elapsed_text(entry['prepared_at']), label=entry['label'], messages=list(entry['messages']),
+                    href='/nodes/' + str(step) + '/progress?attempt=' + str(attempt))
+
+    def _attention(self, token, manager, snapshot, status):
+        view = snapshot['view']
+        display = status['display']
+        items = []
+        if status['state'] == 'waiting':
+            current = display['current']
+            item = dict(text='A 记录了等待条件：' + (status['headline'].removeprefix('A 等待：')) + ' 请核对原因、补充材料或方向建议后再处理。',
+                        href='/results/' + str(current['step']), action='查看等待原因与阶段结论')
             if manager and current['role'] == 'A' and snapshot['conclusion']['ordinary'] and not display['completed']:
-                hero += '<p class="note">确认后继续研究，将由综合评估助手重新判断下一步；原结论与已用预算保留。</p>'
-                hero += self._control_form(token, 'continue', correction_trigger=(view['correction'].get('current_pause') or {}).get('trigger_id'))
-        elif display['state'] == 'unknown':
-            hero += '<p>上一次任务的结果还不确定。请先核对原任务，再决定后续操作；不要重复提交。</p><a class="primary" href="/progress">查看原任务进度</a>'
-        elif display['completed']:
-            hero += '<p>可以阅读综合结论和研究文件，并查看原文中的局限。</p><a class="primary" href="/final-results">查看最终结果</a>'
-        elif display['active']:
-            hero += '<p>研究正在进行，状态会自动更新。</p><a class="primary" href="/progress">查看实时进度</a>'
-        elif manager:
-            hero += '<p>' + ('确认继续后，研究沿用原来的任务与授权；已有用量保留。' if paused else '点击下方按钮后，研究助手才会开始工作。') + '</p>'
-            hero += self._control_form(token, 'continue' if paused else 'start', correction_trigger=(view['correction'].get('current_pause') or {}).get('trigger_id'))
-        else:
-            hero += '<p>当前为只读页面。使用本地管理入口可开始或暂停研究。</p>'
+                item['form'] = ui.Safe('<p class="note">确认后继续研究，将由综合评估助手重新判断下一步；原结论与已用预算保留。</p>'
+                    + self._control_form(token, 'continue', correction_trigger=(view['correction'].get('current_pause') or {}).get('trigger_id')))
+            items.append(item)
+        if status['state'] == 'unknown':
+            items.append(dict(text='上一次任务的结果还不确定。请核对原任务，勿重复提交。', href='/progress', action='查看原任务进度'))
+        if (view.get('closeout') or {}).get('status') == 'delivery_unknown':
+            items.append(dict(text='交付结果待核对：请按原交付调用核对，勿重复提交。', href='/final-results', action='查看结果'))
+        exhausted = ui_view.exhausted_limits(view, (snapshot.get('ui') or {}).get('used_steps'))
+        if exhausted and not display['completed'] and not display['active']:
+            items.append(dict(text='预算已用完：' + '、'.join(exhausted) + '。' + (
+                '调整预算需在“更多操作”中填写新上限与授权原因。' if manager else '调整预算需使用本地管理入口。'),
+                **(dict(href='#budget', action='调整预算') if manager else {})))
+        if self.approvals:
+            pending = ui_view.guarded(self._pending_requests)
+            if 'error' in pending:
+                items.append(dict(text='实验执行请求暂不可读：' + pending['error']['kind'] + '：' + pending['error']['message'],
+                                  href='/requests', action='查看实验执行请求'))
+            elif pending['count']:
+                items.append(dict(text=str(pending['count']) + ' 个实验执行请求等待决定。', href='/requests', action='逐项核对'))
+        return items
+
+    def _pending_requests(self):
+        directory = self.root / 'execution-authority/requests'
+        ids = sorted(path.name for path in directory.iterdir() if authority.ID.fullmatch(path.name)) if directory.exists() else []
+        return dict(count=sum(1 for key in ids[-50:] if authority.status(self.root, key, secret=self.secret)['state'] == 'pending'))
+
+    def _primary(self, token, manager, snapshot, status):
+        state = status['state']
+        view = snapshot['view']
+        links = {'waiting': ('/results/' + str((status['display']['current'] or {}).get('step')), '查看等待原因'),
+                 'unknown': ('/progress', '查看原任务进度'), 'completed': ('/final-results', '查看结果'),
+                 'budget_exhausted': ('#budget', '调整预算'), 'final': ('#budget', '调整预算')}
+        if state in links:
+            href, label = links[state]
+            if state in {'budget_exhausted', 'final'} and not manager:
+                return ui.Safe('<span class="readonly-note">只读查看</span>')
+            return ui.link(label, href, cls='primary')
+        if not manager:
+            return ui.Safe('<span class="readonly-note">只读查看</span>') if state not in {'pause_requested', 'error'} else None
+        trigger = (view['correction'].get('current_pause') or {}).get('trigger_id')
+        if state in {'ready', 'idle'}:
+            return ui.Safe(self._control_form(token, 'start', correction_trigger=trigger))
+        if state == 'active':
+            return ui.Safe(self._control_form(token, 'pause'))
+        if state == 'paused':
+            return ui.Safe(self._control_form(token, 'continue', correction_trigger=trigger))
+        return None  # pause_requested: the controller offers no cancellation.
+
+    def _notices(self, snapshot, receipt):
+        notices = []
         if receipt:
-            notices = {'accepted':'已接受请求，正在安排研究工作。', 'running':'控制请求仍在处理；研究状态以上方阶段为准。',
+            texts = {'accepted':'已接受请求，正在安排研究工作。', 'running':'控制请求仍在处理；研究状态以上方阶段为准。',
                 'completed':'本次控制请求已结束；研究结论以上方阶段为准。', 'applied':'本次控制请求已处理。',
                 'failed':'本次请求未完成，请查看控制请求记录。', 'pause_requested':'暂停已请求；当前已接受的工作完成后停止。'}
-            notice = notices.get(receipt.get('status'), '控制请求已记录。')
+            notice = texts.get(receipt.get('status'), '控制请求已记录。')
             if (receipt.get('kind') == 'controller' and receipt.get('status') == 'applied'
                     and (receipt.get('result') or {}).get('status') == 'native_stopped'):
                 notice = '本次控制请求已停止推进：原生工作尚未封存阶段结论。请核对原任务，勿重复提交。'
-            hero += '<p class="note">' + notice + '</p>'
+            notices.append(notice)
+        current = snapshot['view']['nodes'][-1] if snapshot['view']['nodes'] else None
         if current and current.get('stop_reason'):
-            hero += '<p class="gap">工作停止说明：' + html.escape(clean(current['stop_reason'])) + '</p>'
-        hero += '</section>'
-        cards = '<div class="cards"><section><h2>模型用量</h2><p class="metric">' + str(usage['observed_tokens']) + ' / ' + str(limits['max_tokens']) + ' tokens</p><p class="note">已观测用量 / 授权总上限；预留 ' + str(usage.get('reserved_tokens', 0)) + ' tokens</p>'
-        cards += '<p>' + (str(len(usage['unknown_steps'])) + ' 个阶段的用量尚不完整，不能视作全部实际用量。' if usage['unknown_steps'] else '已记录阶段的用量可核对。') + '</p></section>'
-        cards += '<section><h2>研究时间</h2><p class="metric">' + str(round(limits['seconds_remaining'], 1)) + ' 秒</p><p>剩余时间；授权总上限 ' + str(limits['max_seconds']) + ' 秒。</p><p class="note">等待与运行时间按实例配置计量。</p></section></div>'
-        pause = ''
-        if manager and display['active'] and not paused:
-            pause = '<section class="secondary"><h2>需要暂停吗？</h2><p>当前已接受的工作完成并记录结论后，停止推进下一阶段。</p>' + self._control_form(token, 'pause') + '</section>'
-        nodes = '<section><h2>最近研究阶段</h2>'
-        for node in view['nodes']:
-            base = '/nodes/' + str(node['step'])
-            nodes += '<article><h3><a href="' + base + '">第 ' + str(node['step']) + ' 阶段 · ' + self._role(node['role']) + '</a></h3><p>' + self._state(node['state']) + '</p>'
-            nodes += ('<a href="/results/' + str(node['step']) + '">阅读阶段结论</a> · <a href="' + base + '/science">完整结论原文</a> · <a href="' + base + '/materials">下载研究文件</a>' if node['state'] == 'seal_present_unverified' else '<a href="' + base + '/progress?attempt=' + str(node.get('continuations', 0)) + '">查看此阶段公开进度</a>') + '</article>'
-        if not view['nodes']:
-            nodes += '<p>还没有开始研究。开始后，这里会显示研究阶段。</p>'
-        nodes += '</section>'
-        conclusion = '<section><h2>最新阶段结论</h2>'
-        if snapshot['conclusion']:
-            result = snapshot['conclusion']
-            conclusion += '<p>第 ' + str(result['step']) + ' 阶段 · ' + self._role(result['role']) + '</p>'
-            conclusion += render.excerpt(clean(result['payload'].get('summary', '请阅读阶段结论原文。')), 1600)
-            conclusion += '<p><a href="/results/' + str(result['step']) + '">阅读发现与局限</a></p>'
+            notices.append('工作停止说明：' + ui_view.cleaner(self.root)(current['stop_reason'], 600))
+        return notices
+
+    def _snapshot_or_error(self, *, force=False):
+        try:
+            return self._snapshot(force=force)
+        except Exception as error:  # noqa: BLE001 - the page keeps its other parts readable
+            return dict(error=ui_view.failure(error, ui_view.cleaner(self.root)))
+
+    def _dashboard_parts(self, token, snapshot):
+        manager = 'maintenance' in self.browser.verify(token, instance_id=self.instance).scopes
+        if 'error' in snapshot:
+            error = snapshot['error']
+            status = dict(state='error', badge=ui_view.STATES['error'],
+                          headline=error['error']['kind'] + '：' + error['error']['message'][:160])
+            hero = ui.hero({}, status, attention=[dict(text='实例快照读取失败（' + error['error']['kind'] + '：'
+                + error['error']['message'] + '）。本页面只读，没有写入任何记录；请核对实例记录后重新打开。',
+                href='/results', action='查看阶段结论')])
+            return {'live-hero': hero, 'live-usage': ui.stats(error), 'live-activity': '', 'live-trail': ui.trail(error)}
+        view = snapshot['view']
+        receipt = self._receipt(snapshot)
+        display = self._presentation(snapshot, receipt)
+        activity = None
+        if display['active'] and display['current']:
+            activity = ui_view.guarded(self._activity, display['current'], clean=ui_view.cleaner(self.root))
+        status = self._status(snapshot, receipt, elapsed=(activity or {}).get('elapsed'))
+        projection = snapshot.get('ui') or {}
+        if 'error' in projection:
+            usage = ui_view.usage_stats(view)
+            trail = projection
+            header = projection
         else:
-            conclusion += '<p>阶段结论尚未返回，可先查看助手的公开工作。</p>'
-        conclusion += '</section>'
-        return {'live-hero':hero, 'live-usage':cards, 'live-pause':pause, 'live-nodes':nodes, 'live-conclusion':conclusion}
+            usage = ui_view.guarded(ui_view.usage_stats, view, used_steps=projection.get('used_steps'),
+                                    candidates=projection.get('candidates'))
+            trail = projection.get('trail') or {}
+            header = projection.get('header') or {}
+        hero = ui.hero(header, status, primary=self._primary(token, manager, snapshot, status),
+                       attention=self._attention(token, manager, snapshot, status), notices=self._notices(snapshot, receipt))
+        # A finished study shows every round as one line; otherwise the current round opens.
+        return {'live-hero': hero, 'live-usage': ui.stats(usage), 'live-activity': ui.activity(activity),
+                'live-trail': ui.trail(trail, older_href='/results', open_current=not display['completed'])}
 
     def _live_snapshot(self, token, mount, *, force=False):
         self.browser.verify(token, instance_id=self.instance)
@@ -607,12 +741,12 @@ class InstanceUI:
             self._admin(token)
             fragments['live-instances'] = self._loaded_instances(force=force)
         else:
-            snapshot = self._snapshot(force=force)
+            snapshot = self._snapshot_or_error(force=force)
             fragments = self._dashboard_parts(token, snapshot)
-            current = snapshot['view']['nodes'][-1] if snapshot['view']['nodes'] else None
-            fragments['live-results'] = self._recent_results(snapshot)
-            if manager:
-                fragments['live-operations'] = self._operation_rows(snapshot['operations'])
+            if 'error' not in snapshot:
+                current = snapshot['view']['nodes'][-1] if snapshot['view']['nodes'] else None
+                if manager:
+                    fragments['live-operations'] = self._operation_rows(snapshot['operations'])
             if manager and not mount:
                 fragments['live-instances'] = self._loaded_instances(force=force)
         if mount:
@@ -630,47 +764,70 @@ class InstanceUI:
             current=dict(step=current['step'], role=self._role(current['role']), attempt=current.get('continuations',0),
                 url=mount + '/nodes/' + str(current['step']) + '/events?attempt=' + str(current.get('continuations',0))) if current else None)
 
-    def _instance_page(self, browser_token, *, after=None, step=None):
-        snapshot = self._snapshot()
+    def _more_actions(self, browser_token, snapshot, *, step=None, open_=False):
+        """Secondary controls; every form keeps its existing endpoint, CSRF and controller gates."""
         manager = 'maintenance' in self.browser.verify(browser_token, instance_id=self.instance).scopes
-        body = self._navigation()
-        body += '<p class="note">当前实例：' + html.escape(self.root.name) + ' · 各页面状态会自动同步。</p>'
-        parts = self._dashboard_parts(browser_token, snapshot)
-        for name in (('live-hero','live-usage','live-conclusion','live-pause') if step is None else ('live-usage',)):
-            body += '<div id="' + name + '">' + parts[name] + '</div>'
-        if step is None and after is None:
-            body += '<div id="live-nodes">' + parts['live-nodes'] + '</div>'
-        else:
-            view = control.status(self.root, after=step-1 if step is not None else after, limit=1 if step is not None else 20, live_feedback=False)
-            if step is not None and not view['nodes']:
-                raise ValueError('This instance node does not exist')
-            body += '<section><h2>' + ('固定阶段记录' if step else '研究阶段记录') + '</h2>'
-            for node in view['nodes']:
-                base = '/nodes/' + str(node['step'])
-                body += '<article><h3>第 ' + str(node['step']) + ' 阶段 · ' + self._role(node['role']) + '</h3><p>' + self._state(node['state']) + '</p>'
-                if node['state'] == 'seal_present_unverified':
-                    body += '<p><a href="/results/' + str(node['step']) + '">阅读阶段结论</a> · <a href="' + base + '/science">完整结论原文</a> · <a href="' + base + '/materials">下载研究文件</a></p>'
-                else:
-                    body += '<p><a href="' + base + '/progress?attempt=' + str(node.get('continuations', 0)) + '">查看此阶段公开进度</a></p>'
-                body += '</article>'
-            if view.get('next_after') is not None:
-                body += '<a href="/?after=' + str(view['next_after']) + '">查看后续阶段</a>'
-            body += '</section>'
-        body += '<details class="secondary"><summary>预算与高级管理</summary>'
-        if manager:
-            body += '<p><a href="/operations">控制请求记录</a> · <a href="/?after=0">浏览阶段</a></p>'
-            # These explicit advanced operations remain subject to the common
-            # controller gates. Live status does not grant new permissions.
-            for action in ('start','pause','continue'):
-                body += self._control_form(browser_token, action, correction_trigger=(snapshot['view']['correction'].get('current_pause') or {}).get('trigger_id'))
-            if step is not None:
-                body += self._form(browser_token, 'resume', '<input type="hidden" name="step" value="' + str(step) + '">', '继续此阶段原任务（须满足原有条件）')
-            body += '<h3>申请调整预算</h3><p>填写新上限和原因。变更在安全边界处理；已用额度保留。</p>'
-            body += self._form(browser_token, 'budget', '<label>新的 tokens 总上限<input name="max_tokens" type="number" min="1"></label><label>新的时间总上限（秒）<input name="max_seconds" type="number" step="any" min="0"></label><label>新的阶段总上限<input name="max_steps" type="number" min="1"></label><label>授权原因<textarea name="authorization_note" required></textarea></label><label>原始授权陈述（调整阶段上限时必填）<textarea name="authorization_statement"></textarea></label>', '提交预算变更')
+        body = '<details class="more-actions" id="more-actions"' + (' open' if open_ else '') + '><summary>更多操作</summary>'
+        if not manager:
+            body += '<p class="note">当前为只读查看。使用本地管理入口可开始、暂停研究或申请调整预算。</p>'
+            return body + '<p><a href="/?after=0">浏览全部阶段记录</a></p></details>'
+        body += '<p class="note">以下操作仍受控制层原有条件约束；页面显示的状态不授予新的权限。</p><div class="action-row">'
+        trigger = None if 'error' in snapshot else (snapshot['view']['correction'].get('current_pause') or {}).get('trigger_id')
+        for action in ('start', 'pause', 'continue'):
+            body += self._control_form(browser_token, action, correction_trigger=trigger)
+        body += '</div>'
+        if step is not None:
+            body += self._form(browser_token, 'resume', '<input type="hidden" name="step" value="' + str(step) + '">', '继续此阶段原任务（须满足原有条件）')
+        body += '<h3 id="budget">申请调整预算</h3><p>填写新上限和原因。变更在安全边界处理；已用额度保留。</p>'
+        body += self._form(browser_token, 'budget', '<label>新的 tokens 总上限<input name="max_tokens" type="number" min="1"></label><label>新的时间总上限（秒）<input name="max_seconds" type="number" step="any" min="0"></label><label>新的阶段总上限<input name="max_steps" type="number" min="1"></label><label>授权原因<textarea name="authorization_note" required></textarea></label><label>原始授权陈述（调整阶段上限时必填）<textarea name="authorization_statement"></textarea></label>', '提交预算变更')
+        body += '<p><a href="/operations">控制请求记录</a> · <a href="/?after=0">浏览全部阶段记录</a>'
         if self.approvals:
-            body += '<p><a href="/requests">实验执行请求</a></p>'
-        body += '</details>'
-        return 200, self._page('研究总览' if step is None else '研究阶段', body), {}
+            body += ' · <a href="/requests">实验执行请求</a>'
+        return body + '</p></details>'
+
+    _OVERVIEW_NOTES = (
+        '阶段结论是 H/W/A/E 研究者记录的原文；记录完成不等于科学结论已获认可。',
+        '模型用量为已观测值；用量未知的阶段只计下界，预留用量单列。',
+        'W 的“本阶段实验”是封存观察中已接受的受管调用数，不等于独立实验设计数或科学覆盖。',
+        '“最高/最低”只在同一评估口径内、按作者声明的指标方向取值；不同口径不可直接比较，界面不提供科学排序或默认选择。',
+        '★ A 推荐来自作者原文，✓ 已交付来自控制层交付记录，两者各自保留。',
+        '是否达到研究目标，请结合结论原文中的局限与待解决问题判断。',
+        '方向建议只交给研究者参考，不授予实验执行权限或额外预算。',
+    )
+
+    def _instance_page(self, browser_token, *, after=None, step=None):
+        snapshot = self._snapshot_or_error()
+        parts = self._dashboard_parts(browser_token, snapshot)
+        if step is None and after is None:
+            header = {} if 'error' in snapshot else ((snapshot.get('ui') or {}).get('header') or {})
+            title = header.get('title') if 'error' not in header and header.get('title') else '研究总览'
+            body = self._navigation('/')
+            for name in ('live-hero', 'live-usage', 'live-activity', 'live-trail'):
+                body += '<div id="' + name + '">' + parts[name] + '</div>'
+            state = None if 'error' in snapshot else self._status(snapshot, self._receipt(snapshot))['state']
+            body += self._more_actions(browser_token, snapshot, open_=state in {'budget_exhausted', 'final'})
+            body += ui.understanding(self._OVERVIEW_NOTES)
+            body += '<details class="instance-info"><summary>实例信息</summary><p class="note">实例目录名：' + ui.esc(self.root.name) + '</p></details>'
+            return 200, self._page(title, body), {}
+        body = self._navigation()
+        body += '<div id="live-usage">' + parts['live-usage'] + '</div>'
+        view = control.status(self.root, after=step-1 if step is not None else after, limit=1 if step is not None else 20, live_feedback=False)
+        if step is not None and not view['nodes']:
+            raise ValueError('This instance node does not exist')
+        body += '<section><h2>' + ('固定阶段记录' if step else '研究阶段记录') + '</h2>'
+        for node in view['nodes']:
+            base = '/nodes/' + str(node['step'])
+            body += '<article><h3>第 ' + str(node['step']) + ' 阶段 · ' + self._role(node['role']) + '</h3><p>' + self._state(node['state']) + '</p>'
+            if node['state'] == 'seal_present_unverified':
+                body += '<p><a href="/results/' + str(node['step']) + '">阅读阶段结论</a> · <a href="' + base + '/science">完整结论原文</a> · <a href="' + base + '/materials">下载研究文件</a></p>'
+            else:
+                body += '<p><a href="' + base + '/progress?attempt=' + str(node.get('continuations', 0)) + '">查看此阶段公开进度</a></p>'
+            body += '</article>'
+        if view.get('next_after') is not None:
+            body += '<a href="/?after=' + str(view['next_after']) + '">查看后续阶段</a>'
+        body += '</section>'
+        body += self._more_actions(browser_token, snapshot, step=step)
+        return 200, self._page('研究阶段', body), {}
 
     def _materials_page(self, step, after):
         page=science.materials(self.root,step,after=after)
@@ -683,30 +840,150 @@ class InstanceUI:
             body += '<a href="/nodes/'+str(step)+'/materials?after='+str(page['next_after'])+'">后续研究文件</a>'
         return 200,self._page('研究文件下载',body,live=False),{}
 
-    def _results_page(self, after):
-        maximum=budget.historical_step_limit(self.root)
-        steps=sorted(int(path.stem) for path in (self.root/'jobs').glob('*.json')
-            if path.stem.isascii() and path.stem.isdecimal() and path.stem==f'{int(path.stem):03d}'
-            and after<int(path.stem)<=maximum)
-        found=[]
+    def _sealed_steps(self, after=0, limit=None):
+        maximum = budget.historical_step_limit(self.root)
+        steps = sorted(int(path.stem) for path in (self.root/'jobs').glob('*.json')
+            if path.stem.isascii() and path.stem.isdecimal() and path.stem == f'{int(path.stem):03d}'
+            and after < int(path.stem) <= maximum)
+        found = []
         for step in steps:
-            record=execution.origin(self.root,step)/'result-identity.json'
-            if record.exists() or record.is_symlink():found.append(step)
-            if len(found)==21:break
-        body=self._navigation() + '<div id="live-conclusion"></div><div id="live-results">' + self._recent_results(self._snapshot()) + '</div><p>每个完成阶段的研究发现、建议和局限都保留在这里。点击可阅读原文摘要并下载研究文件。</p><ul>'
-        for step in found[:20]:body+='<li><a href="/results/'+str(step)+'">第 '+str(step)+' 阶段结论</a></li>'
-        body+='</ul>'
-        if not found:body+='<p>还没有阶段结论。开始研究后，可先到“实时进度”查看工作情况。</p>'
-        if len(found)>20:body+='<a href="/results?after='+str(found[19])+'">查看后续阶段结论</a>'
-        return 200,self._page('阶段结论',body),{}
+            record = execution.origin(self.root, step)/'result-identity.json'
+            if record.exists() or record.is_symlink():
+                found.append(step)
+            if limit is not None and len(found) == limit:
+                break
+        return found
 
-    def _result_page(self, step):
+    def _results_page(self, after, *, explicit=False):
+        """One list, newest first; each row is the author's own one-line summary."""
+        clean = ui_view.cleaner(self.root)
+        reader = ui_view.Reader(self.root, self.view_memo)
+        if explicit:
+            found = self._sealed_steps(after, limit=21)
+            shown, more = found[:20], (found[19] if len(found) > 20 else None)
+            earlier = None
+        else:
+            found = self._sealed_steps()
+            shown, more = found[-20:], None
+            earlier = 0 if len(found) > 20 else None
+        body = self._navigation('/results') + '<p>每个完成阶段的研究发现、建议和局限都保留在这里，按时间倒序排列。点击可阅读阶段结论并下载研究文件。</p>'
+        if not shown:
+            body += '<p>还没有阶段结论。开始研究后，可先到“实时进度”查看工作情况。</p>'
+        else:
+            body += '<ol class="results-list">'
+            for step in reversed(shown):
+                row = ui_view.guarded(ui_view.results_list_row, reader, step, clean, clean=clean)
+                if 'error' in row:
+                    body += ('<li>' + ui.link('第 ' + str(step) + ' 阶段', '/results/' + str(step))
+                             + ui.error_inline(row, what='本阶段摘要') + '</li>')
+                    continue
+                body += ('<li><p class="role-head">' + ui.link('第 ' + str(step) + ' 阶段 · ' + row['role_label'], '/results/' + str(step))
+                         + '</p><p class="one-line">' + ui.esc(row['one_line']) + '</p></li>')
+            body += '</ol>'
+        if more is not None:
+            body += '<a href="/results?after=' + str(more) + '">查看后续阶段结论</a>'
+        if earlier is not None:
+            body += '<a href="/results?after=0">查看更早的阶段结论（从第 1 阶段起）</a>'
+        return 200, self._page('研究过程', body, live=False), {}
+
+    _RESULT_NOTES = (
+        '结论卡片只呈现作者原文与控制记录；记录完成不等于科学结论已获认可。',
+        '★ A 推荐来自作者原文，✓ 已交付来自控制层交付记录；界面不自造“最佳”或“推荐”。',
+        '候选按首次观察顺序列出并按评估口径分组；不同口径的数值不可直接比较，组内排序只按数值，不代表科学排序。',
+        '缺失指标与执行失败的候选保留在表中，不被过滤。',
+        '是否达到研究目标，请结合局限与待解决问题判断；完整原文与研究文件可逐项下载核对。',
+    )
+
+    def _materials_overview(self, through, reader):
+        """Exact sealed member counts per stage up to ``through`` (no member bytes read)."""
+        steps = [step for step in self._sealed_steps() if step <= through]
+        shown = steps[-ui_view.WINDOW:]
+        return dict(rows=[(step, len(reader.node(step)['seal'].get('materials') or [])) for step in shown],
+                    truncated=len(steps) > len(shown))
+
+    def _candidates(self, step):
+        key = (step, live.fingerprint(self.root))
+        value = self.candidate_cache.get(key)
+        if value is None:
+            value = ui_view.candidate_projection(self.root, step)
+            self.candidate_cache = {key: value}
+        return value
+
+    def _result_page(self, step, *, final=False):
+        # The exact subject is verified first; an integrity failure fails the page.
         _,seal,raw,proof=science._sealed(self.root,step)
         job_path=self.root/'jobs'/f'{step:03d}.json'
         job=science._json(job_path,science._proof(job_path,seal['job_sha256']))
         with science.Original(raw,proof) as original:
             payload=json.load(original.stream);original.check()
-        return 200,render.result(step,job,payload,seal),{}
+        clean = ui_view.cleaner(self.root)
+        reader = ui_view.Reader(self.root, self.view_memo)
+        reader._nodes[step] = dict(job=job, payload=payload, seal=seal)
+        full = ('<details class="full-text"><summary>查看完整原文（第 ' + str(step) + ' 阶段）</summary>'
+                + render.result_body(step, job, payload, seal) + '</details>')
+        role = job['role']
+        label = ui_view.ROLE_LABELS.get(role, role)
+        if role != 'A':
+            mechanisms = ui_view.guarded(ui_view.mechanism_labels, reader, range(1, step + 1))
+            node = dict(step=step, role=role, state='seal_present_unverified')
+            line = ui_view.guarded(lambda: ui_view.role_line(reader, node, clean,
+                mechanisms={} if 'error' in mechanisms else mechanisms), clean=clean)
+            if 'error' in line:
+                line = dict(node, role_label=label, state_label='已有阶段结论', sealed=False, facts=[], links=[], error=line['error'])
+            body = self._navigation('/results') + ui.role_line(line, expanded=True) + full
+            body += ui.understanding(self._RESULT_NOTES[:1] + (
+                'W 的“本阶段实验”是封存观察中已接受的受管调用数，不等于独立实验设计数或科学覆盖。',
+                '本阶段候选按首次观察顺序列出；“最高/最低”只在同一口径内按作者声明方向取值，不代表科学排序。'))
+            return 200, render.page('第 ' + str(step) + ' 阶段 · ' + label, body), {}
+        snapshot = self._snapshot_or_error()
+        closeout = None if 'error' in snapshot else snapshot['view'].get('closeout')
+        mechanisms = ui_view.guarded(ui_view.mechanism_labels, reader, range(1, step + 1))
+        mechanisms = {} if 'error' in mechanisms else mechanisms
+        projection = ui_view.guarded(self._candidates, step, clean=clean)
+        card = ui_view.guarded(lambda: ui_view.result_card(reader, step, closeout=closeout,
+            projection=None if 'error' in projection else projection, clean=clean), clean=clean)
+        delivered = ((closeout or {}).get('last_confirmed') or {}).get('candidate_id')
+        files = ''
+        if 'error' not in card:
+            if 'error' in snapshot:
+                card['delivery_state'], card['delivery_label'] = 'unknown', '交付状态未知'
+            chosen = card.get('chosen')
+            member = ui_view.guarded(ui_view.candidate_file, reader, chosen, projection, clean=clean) \
+                if chosen and 'error' not in projection else None
+            if member and 'error' not in member:
+                confirmed = ((closeout or {}).get('last_confirmed') or {}).get('artifact_sha256')
+                kind = '下载交付文件' if card['delivery_state'] == 'confirmed' and confirmed == member['sha256'] else '下载推荐候选的研究文件'
+                files += ui.link(kind + '：' + member['name'].rsplit('/', 1)[-1], '/nodes/' + str(member['step']) + '/materials/' + str(member['index']), cls='primary')
+                files += '<p class="note">sha256 ' + ui.esc(member['sha256'][:16]) + '… · 第 ' + ui.esc(member['step']) + ' 阶段研究文件</p>'
+            files += ui.link('查看完整原文', '#full-text', cls='secondary-link')
+        rows = ui_view.guarded(lambda: ui_view.candidate_rows(projection, recommended=(card.get('chosen') or {}).get('id')
+            if 'error' not in card else None, delivered=delivered, audits=ui_view.audit_facts(closeout), mechanisms=mechanisms, clean=clean), clean=clean) \
+            if 'error' not in projection else projection
+        table = ui.candidate_table(rows, ident='candidates')
+        if not final:
+            table = ui.Safe('<details class="candidates-fold"><summary>候选比较（本阶段开始时已有的观察）</summary>' + table + '</details>')
+        materials = ui_view.guarded(self._materials_overview, step, reader, clean=clean)
+        section = '<section class="materials" id="materials"><h2>研究文件</h2>'
+        if 'error' in materials:
+            section += ui.error_inline(materials, what='研究文件清单')
+        else:
+            total = sum(count for _, count in materials['rows'])
+            own = len(seal.get('materials') or [])
+            scope = ('截至本阶段的最近 ' + str(ui_view.WINDOW) + ' 个已封存阶段共 ') if materials['truncated'] else '截至本阶段，各阶段共 '
+            section += ('<p>本阶段 ' + str(own) + ' 份；' + scope + str(total) + ' 份研究文件。'
+                        '分组浏览属于后续改进，这里按阶段提供下载入口。</p><ul class="material-steps">')
+            for number, count in materials['rows']:
+                if count:
+                    section += '<li>' + ui.link('第 ' + str(number) + ' 阶段 · ' + str(count) + ' 份', '/nodes/' + str(number) + '/materials') + '</li>'
+            section += '</ul>'
+        section += '</section>'
+        body = self._navigation('/final-results' if final else '/results')
+        body += ui.result_card(card, files=ui.Safe(files) if files else None) + table + section
+        body += full.replace('<details class="full-text">', '<details class="full-text" id="full-text">', 1)
+        body += ui.understanding(self._RESULT_NOTES)
+        title = '最终结果 · 第 ' + str(step) + ' 阶段' if final else '第 ' + str(step) + ' 阶段 · ' + label
+        # The hash-authorized host script only sorts rows inside one evaluation_key group.
+        return 200, render.page(title, body, live=True), {}
 
     def get(self, target, *, host, cookie=None):
         if host != self.host:
@@ -754,11 +1031,12 @@ class InstanceUI:
             if parsed.query:
                 raise ValueError('Exact new research page required')
             return self._new_research_page(browser_token)
-        if parsed.path in {'/instances', '/configuration', '/guidance', '/operations'}:
+        if parsed.path in {'/instances', '/configuration', '/guidance', '/operations', '/settings'}:
             if parsed.query:
                 raise ValueError('Exact instance page required')
             return {'/instances': self._instances_page, '/configuration': self._configuration_page,
-                    '/guidance': self._guidance_page, '/operations': self._operations_page}[parsed.path](browser_token)
+                    '/guidance': self._guidance_page, '/operations': self._operations_page,
+                    '/settings': self._settings_page}[parsed.path](browser_token)
         if parsed.path == '/progress':
             if parsed.query:
                 raise ValueError('Exact progress page required')
@@ -766,17 +1044,22 @@ class InstanceUI:
         if parsed.path == '/final-results':
             if parsed.query:
                 raise ValueError('Exact final result page required')
-            final = self._final_step()
+            try:
+                final = self._final_step()
+            except Exception as error:  # noqa: BLE001 - name the failure; other pages stay usable
+                failure = ui_view.failure(error, ui_view.cleaner(self.root))
+                return 200, self._page('最终结果', self._navigation('/final-results') + '<section><h2>最终结论暂不可读</h2>'
+                    + ui.error_inline(failure, what='最终结论') + '<a class="primary" href="/results">查看研究过程</a></section>'), {}
             if final is not None:
-                return self._result_page(final)
-            return 200, self._page('最终结果', self._navigation() + '<section class="empty"><h2>最终综合结论尚未返回</h2><p>你可以先阅读已完成阶段的发现与局限。</p><a class="primary" href="/results">查看阶段结论</a></section>'), {}
+                return self._result_page(final, final=True)
+            return 200, self._page('最终结果', self._navigation('/final-results') + '<section class="empty"><h2>最终综合结论尚未返回</h2><p>你可以先阅读已完成阶段的发现与局限。</p><a class="primary" href="/results">查看研究过程</a></section>'), {}
         if parsed.path=='/results':
             query=parse_qs(parsed.query,strict_parsing=True) if parsed.query else {}
             if set(query)-{'after'} or any(len(values)!=1 for values in query.values()):
                 raise ValueError('Exact scientific result continuation required')
             after=query.get('after',['0'])[0]
             if not after.isascii() or not after.isdecimal():raise ValueError('Exact scientific result continuation required')
-            return self._results_page(int(after))
+            return self._results_page(int(after), explicit=bool(query))
         if parsed.path.startswith('/results/'):
             number=parsed.path.removeprefix('/results/')
             if parsed.query or not number.isascii() or not number.isdecimal() or int(number)<=0:
