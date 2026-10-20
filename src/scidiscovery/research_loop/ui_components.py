@@ -7,6 +7,7 @@ concatenate unescaped author content.
 from __future__ import annotations
 
 import html
+import json
 import math
 
 
@@ -18,6 +19,15 @@ def esc(value):
     if isinstance(value, Safe):
         return value
     return html.escape('' if value is None else str(value), quote=True)
+
+
+def translatable(value):
+    """Explicit natural-language slot; original text is escaped and retained."""
+    text = '' if value is None else str(value)
+    if not text.strip() or len(text) > 12000:
+        return esc(text)
+    return Safe('<span data-translation-source="' + html.escape(json.dumps(text, ensure_ascii=False), quote=True) + '">'
+                + html.escape(text, quote=True) + '</span>')
 
 
 def join(*parts):
@@ -112,11 +122,11 @@ def role_line(line, *, expanded=False):
     if line.get('error'):
         body += error_inline(line, what='本阶段摘要')
     if line.get('one_line'):
-        body += '<p class="one-line">' + esc(line['one_line']) + '</p>'
+        body += '<p class="one-line">' + translatable(line['one_line']) + '</p>'
     body += facts(line.get('facts'))
     if expanded and line.get('mechanisms'):
         body += '<h3>机制承诺（' + esc(len(line['mechanisms'])) + '）</h3><ol class="mechanisms">' + ''.join(
-            '<li><strong>' + esc(item['label']) + '</strong>' + ('<p>' + esc(item['minimal_test']) + '</p>' if item.get('minimal_test') else '')
+            '<li><strong>' + translatable(item['label']) + '</strong>' + ('<p>' + translatable(item['minimal_test']) + '</p>' if item.get('minimal_test') else '')
             + '</li>' for item in line['mechanisms']) + '</ol>'
     if expanded and line.get('candidate_rows') is not None:
         rows = line['candidate_rows']
@@ -125,7 +135,7 @@ def role_line(line, *, expanded=False):
             body += '<div class="table-scroll"><table class="compact"><thead><tr><th scope="col">标签</th><th scope="col">指标</th><th scope="col">口径</th><th scope="col">状态</th></tr></thead><tbody>'
             from .ui_view import fmt_metric
             for row in rows:
-                body += ('<tr><td>' + esc(row.get('label') or str(row.get('id', ''))[-12:]) + '</td><td class="num">' + esc(fmt_metric(row.get('metric')))
+                body += ('<tr><td>' + (translatable(row['label']) if row.get('label') else esc(str(row.get('id', ''))[-12:])) + '</td><td class="num">' + esc(fmt_metric(row.get('metric')))
                          + '</td><td>' + esc(row.get('evaluation_key') if row.get('evaluation_key') is not None else '未声明')
                          + '</td><td>' + esc({'ok': '成功', 'failed': '失败', 'unknown': '未知'}.get(row.get('status'), row.get('status') or '未知')) + '</td></tr>')
             body += '</tbody></table></div><p class="note">按首次观察顺序列出；不代表科学排序。</p>'
@@ -252,10 +262,10 @@ def candidate_table(value, *, open_=True, ident='candidates'):
         return Safe('<section class="candidates" id="' + esc(ident) + '"><h2>候选比较</h2>' + error_inline(value, what='候选表') + '</section>')
     total = value['total']
     body = ('<section class="candidates" id="' + esc(ident) + '"><h2>候选比较（' + esc(total) + '）</h2>'
-            '<p class="note">默认按首次观察顺序排列，并按评估口径（evaluation_key）分组；不同口径的数值不可直接比较。'
+            '<p class="note">仅显示本阶段输入范围内最近 W 的提名候选及 A 选中的候选。默认按首次观察顺序排列，并按评估口径（evaluation_key）分组；不同口径的数值不可直接比较。'
             '★ 为 A 的作者推荐，✓ 为控制记录的已确认交付，✕ 为执行失败；界面不提供科学排序或默认选择。</p>')
     if not total:
-        return Safe(body + empty('还没有已观察的候选方案。') + '</section>')
+        return Safe(body + empty('未记录提名或 A 选中候选。') + '</section>')
     extra = sum(1 for group in value['groups'] for row in group['rows'] if row['extra'])
     toggle = ''
     if extra:
@@ -278,9 +288,9 @@ def candidate_table(value, *, open_=True, ident='candidates'):
             metric = row['metric'] if _number(row['metric']) else ''
             body += ('<tr' + cls + ' data-order="' + esc(row['order']) + '" data-metric="' + esc(metric) + '">'
                      '<td class="marks">' + _marks(row) + '</td>'
-                     '<td><span class="cand-label">' + esc(row['label']) + '</span>'
+                     '<td><span class="cand-label">' + (translatable(row['label']) if row.get('authored_label', True) else esc(row['label'])) + '</span>'
                      + ('<span class="cand-ref">' + esc(row['reference']) + '</span>' if row.get('reference') else '') + '</td>'
-                     '<td>' + esc(row['mechanism']) + '</td><td class="num">' + esc(row['metric_text']) + '</td>'
+                     '<td>' + (translatable(row['mechanism']) if row.get('authored_mechanism', True) else esc(row['mechanism'])) + '</td><td class="num">' + esc(row['metric_text']) + '</td>'
                      '<td>' + esc(row['direction'] or '') + '</td>'
                      '<td>' + (link('第 ' + str(row['step']) + ' 阶段', '/results/' + str(row['step'])) if isinstance(row['step'], int) else '—') + '</td>'
                      '<td>' + esc(row['audit']) + '</td><td>' + esc(row['status']) + '</td></tr>')
@@ -300,7 +310,7 @@ def result_card(card, *, files=None, full_href=None):
     audit = card['delivery_state'] == 'audit'
     chosen = card.get('audit_target') if audit else card.get('chosen')
     if chosen:
-        body += ('<h2 class="chosen">' + ('审计对象：' if audit else '') + esc(chosen['label']) + '</h2><dl class="facts">'
+        body += ('<h2 class="chosen">' + ('审计对象：' if audit else '') + (translatable(chosen['label']) if chosen.get('authored_label', True) else esc(chosen['label'])) + '</h2><dl class="facts">'
                  '<div><dt>指标</dt><dd>' + esc(chosen['metric']) + '（口径：' + esc(chosen['evaluation_key']) + '）</dd></div>'
                  + ('<div><dt>方向</dt><dd>' + esc(chosen['direction']) + '</dd></div>' if chosen.get('direction') else '')
                  + '<div><dt>来源阶段</dt><dd>' + (link('第 ' + str(chosen['step']) + ' 阶段', '/results/' + str(chosen['step']))
@@ -313,19 +323,19 @@ def result_card(card, *, files=None, full_href=None):
             body += '<p>作者引用：<code>' + esc(card['recommendation_raw']) + '</code></p>'
         if card.get('resolution_error'):
             body += '<p class="inline-error">引用未能按冻结映射解析：' + esc(card['resolution_error']) + '</p>'
-    body += '<p class="one-line">' + esc(card['summary']) + '</p>'
-    body += '<h3>' + ('审计理由' if audit else '选择理由') + '</h3><p>' + esc(card['reason']) + '</p>'
+    body += '<p class="one-line">' + translatable(card['summary']) + '</p>'
+    body += '<h3>' + ('审计理由' if audit else '选择理由') + '</h3><p>' + translatable(card['reason']) + '</p>'
     change = card.get('criteria_change')
     if change is None:
         body += '<p class="note">准则变化：未记录</p>'
     elif change['details'] and change['status'] == 'revised':
         body += '<details class="criteria"><summary>' + esc(change['label']) + ' · 查看原因</summary>' + ''.join(
-            '<h4>' + esc(row['label']) + '</h4><div class="finding">' + esc(row['text']) + '</div>' for row in change['details']) + '</details>'
+            '<h4>' + esc(row['label']) + '</h4><div class="finding">' + translatable(row['text']) + '</div>' for row in change['details']) + '</details>'
     else:
         body += '<p class="note">' + esc(change['label']) + '</p>'
     body += '<h3>未达成的目标与局限</h3><p>目标完成声明：<strong>' + esc(card['goal_completion']) + '</strong></p>'
     if card['unmet']:
-        body += '<ol class="limits">' + ''.join('<li>' + esc(item) + '</li>' for item in card['unmet']) + '</ol>'
+        body += '<ol class="limits">' + ''.join('<li>' + translatable(item) + '</li>' for item in card['unmet']) + '</ol>'
         if card['unmet_omitted']:
             body += '<p class="note">另有 ' + esc(card['unmet_omitted']) + ' 条局限，见完整原文。</p>'
     else:

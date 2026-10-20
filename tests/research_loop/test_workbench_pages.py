@@ -9,6 +9,7 @@ from scidiscovery.research_loop.configuration_form import SCRIPT_CSP as CONFIG_S
 from test_execution_authority import prepare
 from test_history_handoff import finish
 from test_instance_ui import session
+from ui_html import element_texts
 
 
 def text(page):
@@ -40,9 +41,28 @@ def test_overview_answers_state_action_usage_and_rounds_for_manager_and_reader(t
     before = files(root)
     readonly = text(ui.get('/', host=ui.host, cookie=reader)[1])
     assert 'action="/control/' not in readonly and '只读查看' in readonly
+    assert 'class="budget-adjustment"' not in readonly
     for path in ('/settings', '/results', '/results/1', '/results/2', '/final-results', '/progress', '/guidance', '/?after=0', '/nodes/1'):
         assert ui.get(path, host=ui.host, cookie=reader)[0] == 200, path
     assert files(root) == before
+
+
+@pytest.mark.parametrize('state', ['ready', 'budget_exhausted', 'final'])
+def test_budget_adjustment_starts_collapsed_even_when_more_actions_opens(tmp_path, monkeypatch, state):
+    root, key = prepare(tmp_path, enabled=False)
+    ui, cookie = session(root, key)
+    original_status = ui._status
+    monkeypatch.setattr(ui, '_status', lambda *args, **options: dict(original_status(*args, **options), state=state))
+    page = text(ui.get('/', host=ui.host, cookie=cookie)[1])
+    outer = re.search(r'<details class="more-actions"[^>]*>', page).group(0)
+    assert (' open' in outer) == (state in {'budget_exhausted', 'final'})
+    budget = re.search(r'<details class="budget-adjustment"(.*?)</details>', page, re.S).group(0)
+    assert budget.startswith('<details class="budget-adjustment"><summary>申请调整预算</summary><div id="budget">')
+    assert 'action="/control/budget"' in budget
+    assert all('name="' + field + '"' in budget for field in (
+        'max_tokens', 'max_seconds', 'max_steps', 'authorization_note', 'authorization_statement', 'csrf', 'nonce'))
+    if state != 'ready':
+        assert 'href="#budget"' in page
 
 
 def test_status_matrix_primary_actions_follow_state_without_new_controls(tmp_path):
@@ -96,7 +116,7 @@ def test_workspace_list_names_the_failure_instead_of_a_generic_note(tmp_path, mo
     good = host._loaded_instances()
     assert 'instance-card' in good and '未开始' in good and '0 / 4,000 tokens' in good
     child = host._child(1)
-    monkeypatch.setattr(child, '_snapshot', lambda **options: (_ for _ in ()).throw(OSError('busy record')))
+    monkeypatch.setattr(child, '_summary_snapshot', lambda **options: (_ for _ in ()).throw(OSError('busy record')))
     failed = host._loaded_instances()
     assert '无法读取此实例：OSError：busy record' in failed and '重试' in failed
     assert '状态暂不可用' not in failed
@@ -115,9 +135,10 @@ def test_result_pages_lead_with_the_conclusion_and_keep_the_original(tmp_path):
     assert '未推荐' in page and 'L1' in page and 'L3' in page and '另有 1 条局限' in page
     assert '本阶段 0 份；截至本阶段，各阶段共 1 份研究文件' in page and 'href="/nodes/1/materials"' in page
     assert 'Final &lt;b&gt;judgment&lt;/b&gt;' in page and '研究发现' in page and '/nodes/2/science' in page
-    assert '<script>' + render.PROGRESS_SCRIPT + '</script>' in page and page.count('<script') == 1
+    assert element_texts(page, 'script') == [render.translation_client.SCRIPT, render.PROGRESS_SCRIPT]
     h = text(ui.get('/results/1', host=ui.host, cookie=cookie)[1])
-    assert 'class="role-line"' in h and 'id="full-text"' not in h and '<script' not in h
+    assert 'class="role-line"' in h and 'id="full-text"' not in h
+    assert element_texts(h, 'script') == [render.translation_client.SCRIPT]
     listing = text(ui.get('/results', host=ui.host, cookie=cookie)[1])
     assert listing.count('href="/results/2"') == 1 and listing.index('/results/2') < listing.index('/results/1')
     assert files(root) == before
@@ -128,7 +149,7 @@ def test_result_pages_lead_with_the_conclusion_and_keep_the_original(tmp_path):
 def test_csp_keeps_hash_only_inline_sources():
     assert "'unsafe-inline'" not in render.CSP and "'unsafe-eval'" not in render.CSP
     assert render.CSP == ("default-src 'none'; style-src " + render.STYLE_SOURCE + "; script-src " + render.SCRIPT_SOURCE
-                          + " " + CONFIG_SCRIPT_CSP + "; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+                          + " " + CONFIG_SCRIPT_CSP + " " + render.translation_client.CSP + "; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 
 
 def test_final_gap_page_keeps_candidates_metrics_sources_and_exact_downloads(tmp_path, monkeypatch):
@@ -154,7 +175,9 @@ def test_final_gap_page_keeps_candidates_metrics_sources_and_exact_downloads(tmp
     for target in ('/final-results', '/results/4'):
         status, page, _ = ui.get(target, host=ui.host, cookie=cookie)
         page = text(page)
-        assert status == 200 and 'Public experiment 1' in page and 'Public experiment 2' in page
+        assert status == 200 and 'Public experiment 1' in page
+        table = re.search(r'<section class="candidates.*?</section>', page, re.S).group(0)
+        assert 'Public experiment 1' in table and 'Public experiment 2' not in table
         assert '0.6' in page and 'fixture-public' in page and '无法读取' not in page
         assert 'href="/results/2"' in page and 'href="/nodes/2/materials/1"' in page
         assert '下载推荐候选的研究文件：train.py' in page
@@ -182,7 +205,27 @@ def test_audit_page_marks_only_prior_scientific_recommendation(tmp_path):
     table = re.search(r'<section class="candidates.*?</section>', page, re.S).group(0)
     rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table, re.S)
     p = next(row for row in rows if 'Public experiment 1' in row)
-    q = next(row for row in rows if 'Public experiment 2' in row)
     assert 'mark-recommended' in p and 'A 推荐（作者记录）' in p
-    assert 'mark-recommended' not in q and 'A 推荐（作者记录）' not in q
+    assert not any('Public experiment 2' in row for row in rows)
+    assert files(root) == before
+
+
+def test_result_comparison_keeps_only_nominees_and_exact_a_choice_with_original_download(tmp_path):
+    from test_instance_science import read
+    from test_ui_view import nominated_scene
+    root, key = nominated_scene(tmp_path)
+    ui, cookie = session(root, key)
+    before = files(root)
+    for step, nominees in ((4, range(1, 7)), (6, range(7, 13))):
+        status, page, _ = ui.get(f'/results/{step}', host=ui.host, cookie=cookie)
+        page = text(page)
+        assert status == 200
+        table = re.search(r'<section class="candidates.*?</section>', page, re.S).group(0)
+        assert element_texts(table, 'span', cls='cand-label') == [f'Candidate {i}' for i in [*nominees, 37]]
+        assert '候选比较（7）' in table and '显示全部 37' not in page
+        assert 'mark-recommended' in table and 'Candidate 37' in re.search(r'<section class="result-card.*?</section>', page, re.S).group(0)
+        assert '下载推荐候选的研究文件：model-37.py' in page
+        href = re.search(r'href="([^"]+)"[^>]*>下载推荐候选的研究文件：model-37.py', page).group(1)
+        status, body, _ = ui.get(href, host=ui.host, cookie=cookie)
+        assert status == 200 and read(body) == (root / 'project/nodes/002/artifacts/model-37.py').read_bytes()
     assert files(root) == before

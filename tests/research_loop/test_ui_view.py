@@ -172,6 +172,7 @@ def test_usage_cards_mark_overrun_unknown_usage_and_waiting():
     assert tokens['notes'] == ['最终 A 受保护，超出 84.6 万', '2 个阶段用量未知（下界）']
     assert (value['time']['value'], value['time']['limit'], value['time']['notes']) == ('43 分 57 秒', '3 小时', ['其中等待 10 分'])
     assert (value['steps']['value'], value['steps']['limit']) == ('11', '80')
+    assert value['candidates']['label'] == '历史候选记录'
     assert value['candidates']['value'] == '32' and value['candidates']['notes'] == ['A 推荐 1', '已交付 1']
     missing = ui_view.usage_stats({})
     assert missing['tokens']['value'] == '未记录' and missing['time']['limit'] == '未记录' and missing['candidates']['value'] == '未记录'
@@ -185,7 +186,7 @@ def test_candidate_rows_keep_observation_order_groups_marks_and_missing_values()
              for number in range(1, 26)]
     graph = dict(mechanisms={'h001.m1': dict(label='Mechanism one')},
                  candidates={'local-02': dict(mechanism_ref='h001.m1', execution_status='known_success')})
-    value = ui_view.candidate_rows(dict(index=index, graph=graph, references={'local-01': 'W002-C001/model.pkl'}),
+    value = ui_view.candidate_rows(dict(index=index, nominated_ids=[row['id'] for row in index], graph=graph, references={'local-01': 'W002-C001/model.pkl'}),
                                    recommended='local-07', delivered='local-07', audits={'local-01': '公开审计通过'})
     rows = [row for group in value['groups'] for row in group['rows']]
     assert value['total'] == 25 and len(rows) == 25
@@ -198,11 +199,91 @@ def test_candidate_rows_keep_observation_order_groups_marks_and_missing_values()
     assert by_id['local-01']['audit'] == '公开审计通过' and by_id['local-08']['audit'] == '未审计'
     assert by_id['local-01']['reference'] == 'W002-C001/model.pkl'
     assert not any(row['extra'] for row in rows)  # Every group is within its default 20 rows.
-    single = ui_view.candidate_rows(dict(index=[dict(row, evaluation_key='val') for row in index], graph=graph, references={}),
+    single = ui_view.candidate_rows(dict(index=[dict(row, evaluation_key='val') for row in index], nominated_ids=[row['id'] for row in index], graph=graph, references={}),
                                     recommended='local-25')
     flags = [row['extra'] for row in single['groups'][0]['rows']]
     assert flags == [False] * 20 + [True] * 4 + [False]  # A marked row is never hidden by default.
     assert not any('best' in json.dumps(row) or '最佳' in json.dumps(row, ensure_ascii=False) for row in rows)
+
+
+def nominated_scene(tmp_path):
+    """Sealed historical pool, two W shortlists, and an A choice outside both."""
+    from scidiscovery.research_loop import controller, search
+    public = tmp_path / 'public'; public.mkdir()
+    objective = public / 'objective.md'; objective.write_text('Compare the retained mechanisms.')
+    observer = tmp_path / 'observer.py'
+    observer.write_text('''import json,sys
+r=json.load(sys.stdin)
+rows=[dict(id=f'model-{i}',label=f'Candidate {i}',implementation=f'history/nodes/002/artifacts/model-{i}.py',evaluation_key='val',metric=i/100,direction='max',status='ok',evidence=['project/global/objective.md']) for i in range(1,38)] if r['step']==2 else []
+print(json.dumps(dict(candidates=rows,current_candidate=None,actual_submission=None,coverage=dict(status='complete',note='Presentation fixture only'))))
+''')
+    root = tmp_path / 'instance'
+    controller.prepare(root, objective, public, ['never-invoked'], max_tokens=100000, max_seconds=600,
+        max_steps=8, model='fixture', reasoning_effort='high', experiment_mode='external',
+        search_policy=search.DEFAULT_POLICY, history_observer=dict(adapter=str(observer), config={}))
+    labels = ('P', 'Q', 'R', 'S')
+    plan = dict(scope='Compare four mechanisms', commitments=[dict(label=label, minimal_test='Bounded comparison',
+        existing_ref=None) for label in labels], focus=dict(label=None, action='screen'))
+    finish(root, 1, 'H', [], action='experiment', search_choice=plan)
+    findings = [dict(mechanism=label, basis='blocked', finding='No managed experiment in this UI fixture.') for label in labels]
+    finish(root, 2, 'W', [1], mechanism_findings=findings,
+        files={f'model-{i}.py': f'# exact original {i}\n' for i in range(1, 38)})
+    def nominations(start):
+        return dict(representatives=[dict(mechanism_ref=f'h001.m{i+1}', candidate=f'model-{start+i}',
+            reason='Retain the declared mechanism representative.') for i in range(4)],
+            extras=[dict(candidate=f'model-{start+i}', reason='Retain an explicit alternative.') for i in (4, 5)], gaps=[])
+    finish(root, 3, 'W', [2], mechanism_findings=findings, candidate_nominations=nominations(1))
+    finish(root, 4, 'A', [3], recommendation='model-37')
+    finish(root, 5, 'W', [4], mechanism_findings=findings, candidate_nominations=nominations(7))
+    finish(root, 6, 'A', [5], recommendation='model-37')
+    key = tmp_path / 'operator.key'; key.write_bytes(b'fixture-nomination-key-32-bytes---'); key.chmod(0o600)
+    return root, key
+
+
+def test_comparison_uses_latest_frozen_nominations_and_exact_a_choice_without_shrinking_pool(tmp_path):
+    root, _ = nominated_scene(tmp_path)
+    before = {path: path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    older = ui_view.candidate_projection(root, 4)
+    assert len(older['index']) == 37
+    assert older['nominated_ids'] == [f'model-{i}' for i in range(1, 7)]
+    assert ui_view.candidate_rows(older)['total'] == 6
+    assert ui_view.candidate_rows(older, recommended='model-1')['total'] == 6
+    selected = ui_view.candidate_rows(older, recommended='model-37', delivered='model-36')
+    assert [row['id'] for row in selected['groups'][0]['rows']] == [f'model-{i}' for i in (1, 2, 3, 4, 5, 6, 37)]
+    assert selected['groups'][0]['rows'][-1]['marks'] == ['recommended']
+    assert ui_view.candidate_projection(root, 6)['nominated_ids'] == [f'model-{i}' for i in range(7, 13)]
+    job = dict(ui_view.Reader(root).node(6)['job'], final_report=dict(source_cutoff=3), direct_refs=[])
+    frozen = ui_view.candidate_projection(root, 6, job=job)
+    assert frozen['nominated_ids'] == older['nominated_ids']
+    assert [record['step'] for record in frozen['records']] == [1, 2, 3]
+    direct = ui_view.candidate_projection(root, 6, job=dict(job, direct_refs=[dict(path='inputs/parents/005/conclusion.json')]))
+    assert [record['step'] for record in direct['records']] == [1, 2, 3, 5]
+    assert before == {path: path.read_bytes() for path in root.rglob('*') if path.is_file()}
+
+
+@pytest.mark.parametrize('declaration', [None, dict(representatives=[], extras=[], gaps=[dict(mechanism_ref='h001.m1', reason='No usable model.')])])
+def test_latest_w_without_nominees_never_falls_back_to_older_w_or_pool_but_keeps_a_choice(monkeypatch, declaration):
+    previous = dict(candidate_nominations=dict(
+        representatives=[dict(mechanism_ref='h001.m1', candidate='older-nominee', reason='An earlier W nomination.')],
+        extras=[], gaps=[]))
+    record = {}
+    if declaration is not None:
+        record['candidate_nominations'] = declaration
+    class Saved:
+        def node(self, step):
+            payload = previous if step == 1 else record
+            return dict(job=dict(step=step, role='W'), payload=payload, seal={})
+        def observation(self, step):
+            return dict(candidates=[dict(id=identity, label=identity, evaluation_key='val', implementation=None,
+                metric=1, direction='higher', status='ok') for identity in ('older-nominee', 'historical')],
+                current_candidate=None, actual_submission=None)
+    projection = ui_view.candidate_projection(Path('/unused'), 3, job={}, reader=Saved())
+    assert projection['nominated_ids'] == [] and len(projection['index']) == 2
+    assert ui_view.candidate_rows(projection)['total'] == 0
+    assert ui_view.candidate_rows(projection, delivered='historical')['total'] == 0
+    chosen = ui_view.candidate_rows(projection, recommended='historical')
+    assert chosen['total'] == 1 and chosen['groups'][0]['rows'][0]['marks'] == ['recommended']
+    assert chosen['groups'][0]['rows'][0]['id'] == 'historical'
 
 
 def test_guarded_component_error_is_typed_and_hides_private_paths(tmp_path):
@@ -257,7 +338,8 @@ def test_retained_real_sample_projection_matches_acceptance_facts():
     assert usage['time']['value'].startswith('43 分') and usage['time']['limit'] == '3 小时'
     projection = ui_view.candidate_projection(root, 9)
     rows = ui_view.candidate_rows(projection, recommended=value['confirmed'], delivered=value['confirmed'])
-    assert rows['total'] == 32 and len(rows['groups']) == 2
+    assert len(projection['index']) == 32
+    assert rows['total'] == len(set(projection['nominated_ids']) | {value['confirmed']})
     reader = ui_view.Reader(root)
     card = ui_view.result_card(reader, 9, closeout=view['closeout'], projection=projection)
     assert card['chosen']['label'] == 'convex_strong' and card['delivery_label'] == '已确认交付'
@@ -278,33 +360,31 @@ def test_delivery_state_uses_control_records_and_open_submissions_outrank_old_co
     assert ui_view._delivery_state(None, 'local-a', 'ref', unresolved_reference=True)[0] == 'unknown'
 
 
-def test_reader_memo_reuses_only_unchanged_verified_originals(tmp_path):
+def test_reader_displays_saved_content_without_rechecking_seal_hashes(tmp_path):
     root, _ = prepare(tmp_path, enabled=False)
     finish(root, 1, 'H', [], action='experiment', summary='Plan')
     memo = {}
     first = ui_view.Reader(root, memo).node(1)
-    assert ui_view.Reader(root, memo).node(1) is first
+    assert ui_view.Reader(root, memo).node(1) == first
     original = root / 'native-evidence/001/science-output.json'
     original.chmod(0o600); original.write_bytes(original.read_bytes() + b' ')
-    with pytest.raises(ValueError):
-        ui_view.Reader(root, memo).node(1)
+    assert ui_view.Reader(root, memo).node(1) == first
 
 
 @pytest.mark.parametrize('dependency', ['result.json', 'stage-end.json', 'settings.json'])
-def test_reader_memo_rechecks_canonical_seal_dependencies(tmp_path, dependency):
+def test_saved_reader_does_not_replay_canonical_seal_dependencies(tmp_path, dependency):
     root, _ = prepare(tmp_path, enabled=False)
     finish(root, 1, 'H', [], action='experiment')
     memo = {}
     first = ui_view.Reader(root, memo).node(1)
-    assert ui_view.Reader(root, memo).node(1) is first
+    assert ui_view.Reader(root, memo).node(1) == first
     path = root / ('settings.json' if dependency == 'settings.json' else 'native-evidence/001/' + dependency)
     if path.exists():
         path.chmod(0o600)
         path.write_bytes(path.read_bytes() + b' ')
     else:
         path.write_text('{}\n')
-    with pytest.raises(ValueError):
-        ui_view.Reader(root, memo).node(1)
+    assert ui_view.Reader(root, memo).node(1) == first
 
 
 def test_evaluation_identity_survives_cleaning_truncation_and_missing_values():
@@ -312,7 +392,7 @@ def test_evaluation_identity_survives_cleaning_truncation_and_missing_values():
     keys = ['/secret/alpha', '/secret/beta', 'x' * 310 + 'a', 'x' * 310 + 'b', None, '未声明']
     original = [dict(id=str(index), evaluation_key=key, metric=index, direction='max', observation_step=2)
                 for index, key in enumerate(keys)]
-    value = ui_view.candidate_rows(dict(index=original, graph={}, references={}), clean=clean)
+    value = ui_view.candidate_rows(dict(index=original, nominated_ids=[row['id'] for row in original], graph={}, references={}), clean=clean)
     assert len(value['groups']) == 6
     assert [group['key'] for group in value['groups'][:2]] == ['[private]', '[private]']
     assert all(group['ambiguous_label'] for group in value['groups'])
@@ -324,7 +404,7 @@ def test_evaluation_identity_survives_cleaning_truncation_and_missing_values():
                                           dict(evaluation_key=None, metric=2, direction='max')])
     assert missing['text'] == '口径未声明，无法比较' and 'value' not in missing
     unknown = ui_view.candidate_rows(dict(index=[dict(id=str(number), metric=number, evaluation_key=None)
-        for number in (1, 2)], graph={}, references={}))
+        for number in (1, 2)], nominated_ids=['1', '2'], graph={}, references={}))
     assert len(unknown['groups']) == 2 and all(len(group['rows']) == 1 for group in unknown['groups'])
 
 
@@ -367,7 +447,7 @@ def test_audit_preserves_prior_scientific_recommendation_in_overview(tmp_path, m
     assert value['candidates']['recommended'] is True
     assert value['trail']['rounds'][0]['a'][1]['audit_target'] == 'Q'
     rows = ui_view.candidate_rows(dict(index=[dict(id=identity, evaluation_key='val') for identity in ('P', 'Q')],
-                                      graph={}, references={}), recommended=value['recommended'])
+                                      nominated_ids=['P', 'Q'], graph={}, references={}), recommended=value['recommended'])
     assert [row['marks'] for row in rows['groups'][0]['rows']] == [['recommended'], []]
 
 
@@ -394,8 +474,9 @@ print(json.dumps(dict(candidates=rows,current_candidate=None,actual_submission=N
     card = ui_view.result_card(reader, 3, projection=projection)
     assert card['chosen']['id'] == 'P' and card['chosen']['indexed']
     assert card['chosen']['label'] == 'P' and card['chosen']['metric'] == '0.8'
+    assert projection['nominated_ids'] == []
     rows = ui_view.candidate_rows(projection, recommended=card['chosen']['id'])['groups'][0]['rows']
-    assert [row['marks'] for row in rows] == [['recommended'], []]
+    assert [row['id'] for row in rows] == ['P'] and rows[0]['marks'] == ['recommended']
     member = ui_view.candidate_file(reader, card['chosen'], projection)
     assert member['name'] == 'P/model.py'
     assert reader.node(2)['seal']['materials'][member['index'] - 1]['path'].endswith('/P/model.py')
@@ -411,7 +492,7 @@ print(json.dumps(dict(candidates=rows,current_candidate=None,actual_submission=N
     assert ui_view.resolve_candidate(root, reader.node(3)['job'], 'W002-I002', strict=True) == 'Q'
 
 
-def test_audit_facts_verify_receipts_and_candidate_artifact_scope(tmp_path):
+def test_audit_facts_display_saved_receipts_and_candidate_artifact_scope(tmp_path):
     from scidiscovery.research_loop import candidate_audit, contracts as c
     from test_candidate_audit import audit_fixture, request
     root = audit_fixture(tmp_path)
@@ -432,5 +513,4 @@ def test_audit_facts_verify_receipts_and_candidate_artifact_scope(tmp_path):
     assert ui_view.audit_facts(root, matched)['run-1'] == '公开审计通过'
     path = candidate_audit._directory(root, 3) / 'adapter-result.json'
     value = c.read(path); value['status'] = 'rejected'; c.write(path, value)
-    with pytest.raises(ValueError):
-        ui_view.audit_facts(root, projection)
+    assert ui_view.audit_facts(root, projection) == facts

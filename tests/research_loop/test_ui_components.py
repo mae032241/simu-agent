@@ -1,5 +1,6 @@
 """Workbench components escape author text and render empty/error states inline."""
 from scidiscovery.research_loop import ui_components as ui, ui_view
+from ui_html import element_texts
 
 
 XSS = '<script>alert(1)</script><img src=x onerror=alert(2)>'
@@ -16,7 +17,7 @@ def test_every_component_escapes_author_text_and_only_safe_markup_passes():
     status = dict(state='completed', badge='已完成', headline=XSS, stage=XSS)
     rows = ui_view.candidate_rows(dict(index=[dict(id='local-1', label=XSS, metric=0.5, evaluation_key=XSS,
                                                    direction=XSS, observation_step=2, status='ok')],
-                                       graph={}, references={'local-1': XSS}))
+                                       nominated_ids=['local-1'], graph={}, references={'local-1': XSS}))
     card = dict(step=3, kind='closeout', decision=XSS, delivery_state='recommended', delivery_label='已推荐未交付',
                 chosen=dict(label=XSS, metric='0.5', evaluation_key=XSS, direction=XSS, step=2, reference=XSS),
                 summary=XSS, reason=XSS, criteria_change=dict(status='revised', label='准则已修订',
@@ -36,7 +37,7 @@ def test_empty_and_error_states_render_inline_without_failing_the_page():
     assert ui.stats(failure).startswith('<div class="stats"><p class="inline-error"')
     assert 'ValueError' in ui.stats(failure) and 'Ledger malformed' in ui.trail(failure)
     assert '还没有开始研究' in ui.trail(dict(rounds=[], omitted=0))
-    assert '还没有已观察的候选方案' in ui.candidate_table(dict(total=0, groups=[], limit=20))
+    assert '未记录提名或 A 选中候选' in ui.candidate_table(dict(total=0, groups=[], limit=20))
     assert ui.activity(None) == '' and 'ValueError' in ui.activity(failure)
     assert 'ValueError' in ui.result_card(failure) and 'ValueError' in ui.candidate_table(failure)
     card = ui.instance_card(dict(heading='实例 1 · x', path='/p', retry='/instances', error=dict(kind='OSError', message='busy')))
@@ -56,7 +57,7 @@ def test_candidate_table_is_grouped_neutral_and_keeps_every_row_reachable():
     index = [dict(id=f'local-{number:02d}', label=f'c{number}', evaluation_key='test' if number in (2, 24) else 'val',
                   metric=None if number == 3 else number / 10, status='failed' if number == 4 else 'ok', observation_step=2)
              for number in range(1, 26)]
-    rows = ui_view.candidate_rows(dict(index=index, graph={}, references={}), recommended='local-07', delivered='local-07')
+    rows = ui_view.candidate_rows(dict(index=index, nominated_ids=[row['id'] for row in index], graph={}, references={}), recommended='local-07', delivered='local-07')
     html = ui.candidate_table(rows)
     assert html.count('<tr data-order=') + html.count('<tr class="extra" data-order=') == 25
     assert html.count('class="extra"') == 3 and '显示全部 25 条（另 3 条）' in html
@@ -95,7 +96,8 @@ def test_audit_result_identifies_the_target_without_claiming_a_recommendation():
                 summary='Audit finding', reason='Check the retained measurement', criteria_change=None,
                 goal_completion='未声明', unmet=[], unmet_omitted=0)
     markup = ui.result_card(card)
-    assert '审计对象：Audit candidate' in markup and '审计理由' in markup
+    assert element_texts(markup, 'h2', cls='chosen') == ['审计对象：Audit candidate']
+    assert '审计理由' in element_texts(markup, 'h3')
     assert '推荐' not in markup and 'href="/results/2"' in markup
     missing = ui.result_card(dict(card, audit_target=None))
     assert '审计对象未能对应已观察候选' in missing and '推荐' not in missing

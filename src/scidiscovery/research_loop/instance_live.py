@@ -6,54 +6,29 @@ forms. Transport subscriptions do not run, resume or qualify scientific work.
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 
 
 INTERVAL = 2.0
-MAX_AGE = 15.0
 MAX_EVENT_BYTES = 262144
 MAX_CLIENTS = 16
 STREAM_SECONDS = 24.0
-
-
-def fingerprint(root):
-    """Watch metadata only; never traverse symlinks or private native homes."""
-    rows = []
-    for directory, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(name for name in dirs if name not in {'native-homes', '.scid-ui', '__pycache__', '.git'})
-        for name in sorted(files):
-            # Draft transcript growth is served by the independent bounded
-            # cursor reader; status/usage authority does not read these logs.
-            if name in {'native.jsonl', 'native-public.jsonl', 'native.stderr'}:
-                continue
-            path = os.path.join(directory, name)
-            try:
-                value = os.stat(path, follow_symlinks=False)
-            except FileNotFoundError:
-                continue  # A writer may atomically replace a control record.
-            rows.append((path, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns))
-    return tuple(rows)
 
 
 class SnapshotCache:
     def __init__(self):
         self.lock = threading.Lock()
         self.checked = self.loaded = 0.0
-        self.identity = None
         self.value = None
 
-    def read(self, root, load, *, force=False, refresh=lambda value: True):
+    def read(self, root, load, *, force=False):
         with self.lock:
             now = time.monotonic()
             if not force and self.value is not None and now - self.checked < INTERVAL:
                 return self.value
-            identity = fingerprint(root)
-            self.checked = now
-            if self.value is None or identity != self.identity or (now - self.loaded >= MAX_AGE and refresh(self.value)):
-                value = load()
-                self.value, self.identity, self.loaded = value, identity, now
+            value = load()
+            self.value, self.checked, self.loaded = value, now, now
             return self.value
 
 

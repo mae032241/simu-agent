@@ -5,6 +5,7 @@ import html
 import json
 
 from .configuration_form import SCRIPT_CSP as CONFIG_SCRIPT_CSP
+from . import ui_components as ui, ui_translation_client as translation_client
 
 
 CSS = '''
@@ -36,6 +37,8 @@ progress.meter{display:block;width:100%;height:8px;margin:8px 0 0;border:0;borde
 .table-scroll{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.candidate-table,.compact{font-size:.85rem}.candidate-table td,.candidate-table th,.compact td,.compact th{padding:7px 10px}.candidate-table th,.compact th{white-space:nowrap;background:#f6f9f9}.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.candidates tr.extra{display:none}.toggle-all{position:absolute;opacity:0;width:1px;height:1px}.toggle-all:checked~.candidate-groups tr.extra,.candidate-group.sorted tr.extra{display:table-row}.toggle-all:checked~.toggle-label{display:none}.toggle-all:focus-visible~.toggle-label{outline:3px solid #8cbab0;outline-offset:3px}.toggle-label{margin-top:12px;font-weight:600;cursor:pointer}
 .group-head{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;justify-content:space-between}.group-head h3{margin:18px 0 6px;overflow-wrap:anywhere}.group-head .count{color:#7a8c91;font-weight:450}.sort-button{font-size:.8rem;padding:6px 12px}.sort-note{color:#7a4b0c;font-size:.82rem;margin:0;flex-basis:100%}.mark{display:inline-block;margin-right:4px;font-weight:700}.mark-recommended{color:#a8730a}.mark-delivered{color:#14593f}.mark-failed{color:#a02b1f}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.cand-ref{display:block;font:.7rem/1.5 ui-monospace,monospace;color:#7a8c91;overflow-wrap:anywhere}.candidate-table td:nth-child(2){min-width:9em}.candidate-table{min-width:760px}.candidate-table td:nth-child(3){min-width:4.5em}.candidate-table td:nth-child(5){min-width:7em}.candidate-table td:nth-child(6),.candidate-table td:nth-child(7),.candidate-table td:nth-child(8){white-space:nowrap}.round-meta{white-space:nowrap}.stats>.inline-error{grid-column:1/-1;margin:0}.instance-card .over{color:#a02b1f;font-weight:650}
 .result-card .chosen{font-size:1.5rem;margin:6px 0 8px;overflow-wrap:anywhere}.result-card .eyebrow{margin-bottom:6px}.result-card h3{margin:18px 0 6px}.result-card .facts{font-size:.92rem}.limits{padding-left:22px}.limits li{overflow-wrap:anywhere}.result-actions{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin-top:18px}.result-actions .note{flex-basis:100%;margin:0}.criteria{background:#fafcfc}.material-steps{columns:2;padding-left:20px}.results-list{padding-left:0;list-style:none}.results-list>li{background:#fff;border:1px solid #dce4e6;border-radius:12px;padding:12px 18px;margin:10px 0;overflow-wrap:anywhere}.results-list .one-line{margin:2px 0 0}.settings-list{list-style:none;padding:0}.settings-list li{margin:0 0 14px}.settings-list .note{margin:2px 0 0}
+.mechanism-trails{background:transparent;border:0;padding:0;margin:28px 0}.mechanism-trails>h2{margin-bottom:8px}.mechanism-trails>.note{font-size:.83rem;max-width:850px}.mechanism-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start}.mechanism-card{min-width:0;padding:22px;background:#fff;border:1px solid #d5e0e1;border-radius:12px;box-shadow:0 2px 5px #263c4305;overflow-wrap:anywhere}.mechanism-card-head{display:flex;align-items:flex-start;flex-wrap:wrap;gap:9px 12px;margin-bottom:19px}.mechanism-card-head h3{flex:1;min-width:0;margin:0;font-size:1.06rem;line-height:1.5;color:#203b40}.mechanism-status{background:#edf2f3;color:#4d646a;white-space:normal;font-size:.75rem;max-width:100%}.mechanism-overview{margin:0}.mechanism-overview>div{margin:0 0 15px}.mechanism-overview>div:last-child{margin-bottom:0}.mechanism-overview dt{font-size:.75rem;font-weight:650;color:#6b8085;margin-bottom:4px}.mechanism-overview dt a{color:inherit}.mechanism-overview dd{margin:0;font-size:.88rem;line-height:1.65}.mechanism-details{min-width:0;padding:0;margin:18px 0 0;border:0;border-top:1px solid #e4ebec;border-radius:0;background:transparent}.mechanism-details>summary{padding:14px 0 0;font-size:.82rem;color:#236653}.mechanism-details[open]>summary{margin-bottom:20px}.mechanism-record-count{font-size:.74rem;font-weight:450;color:#7a8d91;white-space:nowrap;margin-left:5px}.mechanism-timeline{list-style:none;padding:0 0 0 14px;margin:0;border-left:2px solid #e1e9e9}.mechanism-event{min-width:0;padding:0 0 20px;margin:0 0 20px;border-bottom:1px solid #e5ebec;font-size:.84rem}.mechanism-event:last-child{padding-bottom:0;margin-bottom:0;border-bottom:0}.mechanism-event-head{font-size:.82rem;line-height:1.7;margin:0 0 10px}.mechanism-event h5{font-size:.8rem;margin:16px 0 7px}.mechanism-event p{white-space:pre-wrap;margin:9px 0}.mechanism-event .note{font-size:.77rem}.mechanism-event .links{font-size:.79rem}.mechanism-event .compact{min-width:500px}.mechanism-event .table-scroll{min-width:0;width:100%}
+@media(max-width:750px){.mechanism-grid{grid-template-columns:minmax(0,1fr);gap:16px}.mechanism-card{padding:18px}.mechanism-card-head{margin-bottom:16px}.mechanism-card-head h3{font-size:1rem}}
 @media(max-width:900px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.stats{grid-template-columns:1fr}.overview-head{flex-direction:column;align-items:stretch;padding:16px 18px}.head-action{align-items:stretch}.head-action .primary,.head-action button{width:100%;text-align:center}.facts{grid-template-columns:1fr}.facts dd{margin-bottom:4px}.role-line{padding:10px 12px}.round>summary{padding:10px 12px}.trail{padding:14px}.material-steps{columns:1}.top-nav{gap:4px 16px}}
 '''
@@ -180,7 +183,7 @@ for (const button of document.querySelectorAll('[data-sort-group]')) {
 """
 SCRIPT_SOURCE = "'sha256-" + base64.b64encode(hashlib.sha256(PROGRESS_SCRIPT.encode()).digest()).decode() + "'"
 STYLE_SOURCE = "'sha256-" + base64.b64encode(hashlib.sha256(CSS.encode()).digest()).decode() + "'"
-CSP = "default-src 'none'; style-src " + STYLE_SOURCE + "; script-src " + SCRIPT_SOURCE + " " + CONFIG_SCRIPT_CSP + "; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+CSP = "default-src 'none'; style-src " + STYLE_SOURCE + "; script-src " + SCRIPT_SOURCE + " " + CONFIG_SCRIPT_CSP + " " + translation_client.CSP + "; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 
 def escape(value):
@@ -191,13 +194,13 @@ def page(title, body, *, live=False):
     return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1"><title>'+escape(title)
         +'</title><style>'+CSS+'</style></head><body><main><div class="app-brand"><span class="brand-mark" aria-hidden="true">S</span>SciDiscovery<span class="brand-caption">研究工作空间</span></div><h1>'+escape(title)+'</h1>'
-        +body+'</main>'+('<script>'+PROGRESS_SCRIPT+'</script>' if live else '')+'</body></html>').encode()
+        +translation_client.TOOLBAR+body+'</main><script>'+translation_client.SCRIPT+'</script>'+('<script>'+PROGRESS_SCRIPT+'</script>' if live else '')+'</body></html>').encode()
 
 
 def excerpt(value, limit):
     text = value if isinstance(value,str) else json.dumps(value,ensure_ascii=False,allow_nan=False)
     omitted = max(0,len(text)-limit)
-    return ('<div class="finding">'+escape(text[:limit])+'</div>'
+    return ('<div class="finding">'+(ui.translatable(text[:limit]) if isinstance(value, str) else escape(text[:limit]))+'</div>'
         + ('<p class="note">'+str(omitted)+' 个字符未展开；可下载完整结论原文。</p>' if omitted else ''))
 
 

@@ -163,6 +163,78 @@ def test_dashboard_shows_controller_stop_receipt_without_private_reason(tmp_path
     assert '本次控制请求已处理。' not in page and 'private-stderr-path-and-token' not in page
 
 
+@pytest.mark.parametrize('reason, explanation', [
+    ('Original execution lost its verified completion; preserved without replay',
+     '原任务缺少可验证的完成记录；现有工作已保留，未重新执行。'),
+    ('private-stderr-path-and-token', None),
+])
+def test_unsealed_controller_receipt_preserves_unknown_task_in_overview_and_live(tmp_path, reason, explanation):
+    from scidiscovery.research_loop import contracts as c, execution
+    root, key = prepare(tmp_path, enabled=False)
+    c.build_job(root, 1, 'H', [])
+    record = execution.origin(root, 1)
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/001.json'), prepared_at=1.0))
+    operation_id = 'd' * 32
+    c.write(root / 'host-control/operations' / (operation_id + '.json'), dict(
+        operation_id=operation_id, kind='controller', sequence=1, status='applied',
+        result=dict(status='native_outcome_unsealed', reason=reason)))
+    originals = {path: path.read_bytes() for path in (root / 'jobs/001.json', record / 'native-intent.json',
+        root / 'host-control/operations' / (operation_id + '.json'))}
+    ui, cookie = session(root, key)
+    page = ui.get('/', host=ui.host, cookie=cookie)[1].decode()
+    overview_hero = re.search(r'<div id="live-hero">(.*?)<div id="live-usage">', page, re.S).group(1)
+    hero = ui._live_snapshot(ui._browser(cookie), '', force=True)['fragments']['live-hero']
+    for rendered in (overview_hero, hero):
+        assert '本次控制请求已停止推进' in rendered and 'native_outcome_unsealed' in rendered
+        assert '上次任务结果不确定' in rendered and '请核对原任务，勿重复提交' in rendered
+        assert 'href="/progress" class="primary">查看原任务进度</a>' in rendered
+        assert '本次控制请求已处理。' not in rendered and reason not in rendered
+        assert '工作已结束' not in rendered
+        if explanation:
+            assert explanation in rendered
+        else:
+            assert '停止说明：' not in rendered
+    assert reason not in page
+    assert 'action="/control/start"' not in hero
+    assert {path: path.read_bytes() for path in originals} == originals
+    assert not (record / 'native-outcome.json').exists()
+    assert not (record / 'result-identity.json').exists()
+
+
+@pytest.mark.parametrize('result_status, text', [
+    ('seal_pending', '阶段结论封存待修复'),
+    ('output_repair_required', '原任务输出待修复'),
+    ('output_repair_unavailable', '原任务输出暂无法修复'),
+    ('waiting_execution', '本次控制请求已结束，正在等待原实验执行'),
+])
+def test_dashboard_explains_returned_controller_block_without_private_reason(tmp_path, result_status, text):
+    from scidiscovery.research_loop import contracts as c
+    root, key = prepare(tmp_path, enabled=False)
+    operation_id = 'd' * 32
+    c.write(root / 'host-control/operations' / (operation_id + '.json'), dict(
+        operation_id=operation_id, kind='controller', sequence=1, status='applied',
+        result=dict(status=result_status, reason='private-stderr-path-and-token')))
+    ui, cookie = session(root, key)
+    page = ui.get('/', host=ui.host, cookie=cookie)[1].decode()
+    assert text in page and result_status in page
+    assert '本次控制请求已处理。' not in page and 'private-stderr-path-and-token' not in page
+    if result_status == 'waiting_execution':
+        assert '本次控制请求已停止推进' not in page and '执行失败' not in page
+
+
+@pytest.mark.parametrize('kind', ['controller', 'budget'])
+def test_dashboard_preserves_ordinary_applied_notice(tmp_path, kind):
+    from scidiscovery.research_loop import contracts as c
+    root, key = prepare(tmp_path, enabled=False)
+    operation_id = 'd' * 32
+    c.write(root / 'host-control/operations' / (operation_id + '.json'), dict(
+        operation_id=operation_id, kind=kind, sequence=1, status='applied', result=dict(status='finish')))
+    ui, cookie = session(root, key)
+    page = ui.get('/', host=ui.host, cookie=cookie)[1].decode()
+    assert '本次控制请求已处理。' in page
+    assert '本次控制请求已停止推进' not in page
+
+
 def test_continue_delegates_to_detached_owner_and_pause_remains_immediate(tmp_path, monkeypatch):
     root, key = prepare(tmp_path, enabled=False)
     ui, cookie = session(root, key)
@@ -188,6 +260,8 @@ def test_continue_delegates_to_detached_owner_and_pause_remains_immediate(tmp_pa
 
 def test_read_cookie_opens_only_sealed_science_and_attachment_members(tmp_path,monkeypatch):
     from test_instance_science import read
+    from scidiscovery.research_loop import instance_render as render
+    from ui_html import element_texts
     root,key=prepare(tmp_path,enabled=False)
     finish(root,1,'H',[],action='analyze',files={'report.html':'<script>untrusted authored file</script>'})
     ui,_=session(root,key)
@@ -203,7 +277,8 @@ def test_read_cookie_opens_only_sealed_science_and_attachment_members(tmp_path,m
     assert status==200 and headers['Content-Type'].startswith('application/json')
     assert read(body)==(root/'native-evidence/001/science-output.json').read_bytes()
     page=ui.get('/nodes/1/materials',host=ui.host,cookie=cookie)[1]
-    assert b'/nodes/1/materials/1' in page and b'<script>' not in page
+    assert b'/nodes/1/materials/1' in page and b'untrusted authored file' not in page
+    assert element_texts(page, 'script') == [render.translation_client.SCRIPT]
     _,body,headers=ui.get('/nodes/1/materials/1',host=ui.host,cookie=cookie)
     assert headers['Content-Disposition'].startswith('attachment;')
     assert read(body)==b'<script>untrusted authored file</script>'
@@ -429,7 +504,7 @@ def test_headless_browser_executes_public_progress_poll(tmp_path, monkeypatch):
     import subprocess
     import tempfile
     import time
-    from scidiscovery.research_loop import instance_ui, contracts as c, execution, runtime, ui_view
+    from scidiscovery.research_loop import instance_ui, contracts as c, execution, runtime, ui_mechanisms, ui_view, ui_translation
     chrome = shutil.which('google-chrome') or shutil.which('chromium')
     node = shutil.which('node')
     if not chrome or not node:
@@ -508,12 +583,51 @@ network = false
             # Synthetic public observations exercise presentation only.
             projection.update(index=[dict(id=f'local-{number:02d}', label=f'Browser candidate {number}',
                 metric=None if number == 3 else number / 10, evaluation_key='test' if number in (2, 24) else 'val',
-                observation_step=1, status='failed' if number == 4 else 'ok') for number in range(1, 26)],
-                graph={}, references={})
+                observation_step=1, status='failed' if number == 4 else 'ok') for number in range(1, 38)],
+                nominated_ids=[f'local-{number:02d}' for number in range(1, 7)], graph={}, references={})
         return projection
     monkeypatch.setattr(ui_view, 'candidate_projection', fixture_candidates)
+    original_card = ui_view.result_card
+    def fixture_card(reader, step, **options):
+        card = original_card(reader, step, **options)
+        if reader.root == root:
+            card.update(chosen=dict(id='local-37', label='Browser candidate 37', metric='3.7',
+                evaluation_key='val', direction=None, step=1, reference=None),
+                delivery_state='recommended', delivery_label='已推荐未交付')
+        return card
+    monkeypatch.setattr(ui_view, 'result_card', fixture_card)
+    original_mechanisms = ui_mechanisms.project
+    def fixture_mechanisms(reader, steps, clean, **options):
+        value = original_mechanisms(reader, steps, clean, **options)
+        if reader.root == root:
+            # Synthetic public presentation records exercise long originals,
+            # local table scrolling and replacement of this exact live slot.
+            question = 'Does the measured response distinguish this mechanism under the declared conditions? ' + 'Original question detail. ' * 25
+            reason = 'Await an independent observation before deciding. ' + 'Original disposition caveat. ' * 25
+            refreshed = advance.exists() and advance.read_text() == 'mechanisms-refresh'
+            items = []
+            for index, label in enumerate(('Transport-driven response', 'Interface-state response'), 1):
+                finding = ('Updated public observation. ' if refreshed and index == 1 else 'The observed response remains uncertain. ') + 'Original finding detail. ' * 25
+                items.append(dict(ref=f'fixture.m{index}', label=label, question=question,
+                    status='deferred', reason=reason, declared_in_window=True, events=[
+                        dict(step=1, role='H', label=label, text=question),
+                        dict(step=2, role='W', text=None, findings=[dict(basis='observed', text=finding)],
+                            calls=None, sources=[1], metrics=[dict(key='Exact fixture validation protocol', ambiguous_label=False,
+                                omitted=0, rows=[dict(label='Fixture candidate with a long original label', metric='0.125',
+                                    direction='lower', status='recorded')])]),
+                        dict(step=3, role='A', status='deferred', text=reason)]))
+            value.update(mechanisms=items, unbound=[], unresolved=[], errors=[], omitted=0, partial=False)
+        return value
+    monkeypatch.setattr(ui_mechanisms, 'project', fixture_mechanisms)
     monkeypatch.setattr(control, 'start_background', detached)
+    translation_permission = tmp_path / 'explicit-translation-click'
+    translation_calls = []
+    def fixture_translate(service, settings, texts):
+        translation_calls.append((translation_permission.exists(), list(texts)))
+        return ['<b>译文</b> ' + text for text in texts], None
+    monkeypatch.setattr(ui_translation.TranslationService, '_translate', fixture_translate)
     ui = InstanceUI(workspace, secret_file=key, workspace=True); ready = threading.Event(); servers = []; errors = []
+    ui.translation.configure(dict(enabled=True, model='fixture-reading-model', target_language='zh-CN'))
     server_type = instance_ui.ThreadingHTTPServer
 
     class Server(server_type):
@@ -696,7 +810,17 @@ await waitFor(`document.querySelector('[data-stream-status]')?.textContent.inclu
 if ((await evaluate(`document.querySelector('[data-events]').textContent`)).includes('Second phase public output')) throw new Error('Historical output followed a newer node');
 await call('Page.navigate', {url:origin+'/instances/1/'});
 await waitFor(`document.getElementById('live-hero')?.innerText.includes('第 2 阶段') && document.querySelector('[data-live-url]')?.dataset.state==='connected'`);
-await evaluate(`(()=>{window.liveDraftSentinel='preserved';document.querySelector('details.more-actions').open=true;document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value='4321';document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value='Keep this unsent budget explanation';const round=document.querySelector('#live-trail details[data-round]');window.retainedRound=round.dataset.detailsKey;round.open=false;round.querySelector('summary').focus();return true})()`);
+if (await evaluate(`document.querySelector('details.budget-adjustment').open`)) throw new Error('Budget adjustment did not begin collapsed');
+await evaluate(`document.querySelector('details.more-actions > summary').click();true`);
+if (await evaluate(`document.querySelector('details.budget-adjustment').open`)) throw new Error('Opening more actions expanded the budget form');
+await evaluate(`document.querySelector('details.budget-adjustment > summary').click();true`);
+if (!(await evaluate(`document.querySelector('details.budget-adjustment').open && document.querySelector('#budget [name="max_tokens"]').getClientRects().length>0`))) throw new Error('Budget summary did not reveal its form');
+await evaluate(`document.querySelector('details.budget-adjustment').open=false;document.querySelector('details.more-actions').open=false;true`);
+await call('Page.navigate', {url:origin+'/instances/1/#budget'});
+await waitFor(`document.querySelector('details.more-actions').open && document.querySelector('details.budget-adjustment').open && document.querySelector('#budget [name="max_tokens"]').getClientRects().length>0`);
+await evaluate(`(()=>{document.querySelector('details.budget-adjustment').open=false;document.querySelector('details.more-actions').open=false;const jump=document.createElement('a');jump.href='#budget';jump.textContent='Budget fragment fixture';document.body.append(jump);jump.click();jump.remove();return true})()`);
+await waitFor(`document.querySelector('details.more-actions').open && document.querySelector('details.budget-adjustment').open && document.querySelector('#budget [name="max_tokens"]').getClientRects().length>0`);
+await evaluate(`(()=>{window.liveDraftSentinel='preserved';document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value='4321';document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value='Keep this unsent budget explanation';const round=document.querySelector('#live-trail details[data-round]');window.retainedRound=round.dataset.detailsKey;round.open=false;round.querySelector('summary').focus();return true})()`);
 await writeFile(process.env.SCID_TEST_ADVANCE, '3');
 await waitFor(`document.getElementById('live-hero')?.innerText.includes('第 3 阶段') && document.getElementById('live-usage')?.innerText.includes('30 / 1,234') && document.getElementById('live-trail')?.innerText.includes('Third browser phase conclusion')`);
 if (!(await evaluate(`window.liveDraftSentinel==='preserved' && document.querySelector('form[action="/instances/1/control/budget"] [name="max_tokens"]').value==='4321' && document.querySelector('form[action="/instances/1/control/budget"] [name="authorization_note"]').value==='Keep this unsent budget explanation'`))) throw new Error('Live dashboard lost typed values or reloaded');
@@ -722,10 +846,8 @@ await call('Page.navigate', {url:origin+'/instances/1/results/2'});
 await waitFor(`document.querySelector('.result-card') !== null && document.querySelector('.candidates-fold') !== null`);
 await evaluate(`document.querySelector('.candidates-fold').open=true;true`);
 const initialGroups = await evaluate(`Array.from(document.querySelectorAll('.candidate-group')).map(group=>Array.from(group.querySelectorAll('tbody tr')).map(row=>row.dataset.order))`);
-if (initialGroups.length !== 2 || initialGroups.flat().length !== 25) throw new Error('Candidate groups lost fixture observations');
-if (!(await evaluate(`Array.from(document.querySelectorAll('.candidate-table tbody tr.extra')).some(row=>!row.getClientRects().length)`))) throw new Error('Candidate expansion fixture did not begin collapsed');
-await evaluate(`document.querySelector('.toggle-label').click();true`);
-if (!(await evaluate(`Array.from(document.querySelectorAll('.candidate-table tbody tr')).every(row=>row.getClientRects().length)`))) throw new Error('Expand all left candidates unreachable');
+if (initialGroups.length !== 2 || initialGroups.flat().length !== 7) throw new Error('Candidate table did not restrict 37 historical candidates to six nominees and the A choice');
+if (!(await evaluate(`document.querySelector('.candidates h2').textContent.includes('（7）') && !document.querySelector('.candidates .toggle-all') && Array.from(document.querySelectorAll('.candidate-table .cand-label')).every(label=>['1','2','3','4','5','6','37'].some(number=>label.textContent==='Browser candidate '+number)) && document.querySelector('.candidate-table .mark-recommended').closest('tr').textContent.includes('Browser candidate 37')`))) throw new Error('Candidate comparison leaked historical alternatives or lost the explicit A choice');
 for (const direction of ['desc','asc','order']) {
   await evaluate(`document.querySelector('[data-sort-group]').click();true`);
   const state = await evaluate(`(()=>{const groups=Array.from(document.querySelectorAll('.candidate-group'));const group=groups[0];return {order:groups.map(item=>Array.from(item.querySelectorAll('tbody tr')).map(row=>row.dataset.order)),metrics:Array.from(group.querySelectorAll('tbody tr')).map(row=>row.dataset.metric===''?null:Number(row.dataset.metric)),state:group.querySelector('[data-sort-group]').dataset.state,neutral:group.querySelector('[data-sort-note]').hidden}})()`);
@@ -737,8 +859,6 @@ for (const direction of ['desc','asc','order']) {
     if (state.neutral || numeric.some((value,index)=>index>0 && (direction==='desc'?numeric[index-1]<value:numeric[index-1]>value)) || state.metrics.at(-1)!==null) throw new Error('Candidate numeric ordering or missing-metric retention failed');
   }
 }
-await evaluate(`document.querySelector('.toggle-all').checked=false;true`);
-if (!(await evaluate(`Array.from(document.querySelectorAll('.candidate-table tbody tr.extra')).every(row=>!row.getClientRects().length)`))) throw new Error('Restored neutral order no longer supports collapsed candidates');
 await screenshot('result-candidates-desktop');
 await call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});
 await noOverflow();
@@ -754,6 +874,68 @@ await screenshot('live-progress-stopped-unconfirmed');
 await call('Page.navigate', {url:origin+'/instances/1/'});
 await waitFor(`document.getElementById('live-hero')?.innerText.includes('本次控制请求已停止推进') && document.getElementById('live-hero')?.innerText.includes('原任务状态待核对')`);
 if ((await evaluate('document.body.innerText')).includes('Private fixture diagnostic')) throw new Error('Private stop diagnostic was rendered');
+await call('Page.navigate', {url:origin+'/instances/1/results'});
+await waitFor(`document.querySelector('#live-mechanisms .mechanism-trails') !== null && document.querySelector('[data-live-url]')?.dataset.state==='connected'`);
+if ((await evaluate('location.pathname')) !== '/instances/1/results') throw new Error('Research process live connection changed the selected route');
+if (!(await evaluate(`(()=>{const cards=Array.from(document.querySelectorAll('.mechanism-card'));const [first,second]=cards.map(card=>card.getBoundingClientRect());return cards.length===2 && Math.abs(first.top-second.top)<1 && second.left>first.right && cards.every(card=>!card.querySelector('details').open) && !document.querySelector('.mechanism-overview').innerText.includes('Original question detail')})()`))) throw new Error('Desktop mechanisms are not separate, concise, collapsed cards in two columns');
+await noOverflow();
+await screenshot('research-process-mechanisms-live');
+await evaluate(`(()=>{const cards=document.querySelectorAll('.mechanism-card');window.neighborCardHeight=cards[1].getBoundingClientRect().height;window.previousMechanism=cards[0].querySelector('details');window.previousMechanism.open=true;window.previousMechanism.querySelector('summary').focus();return true})()`);
+if (!(await evaluate(`Math.abs(document.querySelectorAll('.mechanism-card')[1].getBoundingClientRect().height-window.neighborCardHeight)<1 && document.querySelector('.mechanism-details').innerText.includes('Original disposition caveat')`))) throw new Error('Opening a mechanism stretches its neighbor or hides the full A reason');
+// Cache lookups on navigation and SSE must not launch the fixture translator.
+await waitFor(`!document.querySelector('[data-translation-start]').disabled`);
+await writeFile(process.env.SCID_TEST_TRANSLATION_CLICK, 'explicit');
+await evaluate(`document.querySelector('[data-translation-start]').click(); true`);
+await waitFor(`document.querySelector('.mechanism-card h3 [data-translation-source]')?.textContent.startsWith('<b>译文</b>')`);
+if (await evaluate(`document.querySelector('.mechanism-card h3 b') !== null`)) throw new Error('Model text was interpreted as HTML');
+await evaluate(`document.querySelector('[data-translation-toggle]').click(); true`);
+await waitFor(`document.querySelector('.mechanism-card h3').textContent==='Transport-driven response'`);
+await evaluate(`document.querySelector('[data-translation-toggle]').click(); true`);
+await waitFor(`document.querySelector('.mechanism-card h3').textContent.startsWith('<b>译文</b>')`);
+// CRLF and LF source identities remain distinct through DOM attributes and toggles.
+// Hold the next cache lookup so the busy-state button contract is observable.
+await evaluate(`(()=>{const original=window.fetch;window.fetch=(input,options)=>{if(String(input).endsWith('/lookup') && options?.body && JSON.parse(options.body).texts.some(text=>text.startsWith('Line'))){return new Promise(resolve=>{window.releaseTranslationRead=()=>{window.fetch=original;resolve(original(input,options))}})}return original(input,options)};return true})()`);
+await evaluate(`(()=>{for(const [id,source] of [['crlf','Line'+String.fromCharCode(13,10)+'end'],['lf','Line'+String.fromCharCode(10)+'end']]){const span=document.createElement('span');span.id='translation-'+id;span.dataset.translationSource=JSON.stringify(source);span.textContent=source;document.querySelector('main').append(span)}return true})()`);
+await waitFor(`typeof window.releaseTranslationRead==='function'`);
+if (!(await evaluate(`document.querySelector('[data-translation-start]').disabled`))) throw new Error('Translation start stayed enabled during cache lookup');
+await evaluate(`window.releaseTranslationRead();true`);
+await waitFor(`document.querySelector('#translation-crlf')?.dataset.translationStatus==='missing' && document.querySelector('#translation-lf')?.dataset.translationStatus==='missing' && !document.querySelector('[data-translation-start]').disabled`);
+await evaluate(`document.querySelector('[data-translation-start]').click();true`);
+await waitFor(`document.querySelector('#translation-crlf')?.dataset.translationStatus==='cached' && document.querySelector('#translation-lf')?.dataset.translationStatus==='cached'`);
+await evaluate(`document.querySelector('[data-translation-toggle]').click();true`);
+if (!(await evaluate(`document.querySelector('#translation-crlf').textContent==='Line'+String.fromCharCode(13,10)+'end' && document.querySelector('#translation-lf').textContent==='Line'+String.fromCharCode(10)+'end'`))) throw new Error('Original toggle normalized source newlines');
+await evaluate(`document.querySelector('[data-translation-toggle]').click();true`);
+await writeFile(process.env.SCID_TEST_ADVANCE, 'mechanisms-refresh');
+await waitFor(`!window.previousMechanism.isConnected && document.querySelector('.mechanism-details').open && document.activeElement===document.querySelector('.mechanism-details > summary') && document.querySelector('.mechanism-overview').innerText.includes('Updated public observation.')`);
+await waitFor(`document.querySelector('.mechanism-card h3').textContent.startsWith('<b>译文</b>')`);
+if (!(await evaluate(`document.querySelector('.mechanism-overview').textContent.includes('Updated public observation.') && !Array.from(document.querySelectorAll('[data-translation-source]')).find(node=>JSON.parse(node.dataset.translationSource).startsWith('Updated public observation.'))?.textContent.startsWith('<b>译文</b>')`))) throw new Error('New live source used an old translation or launched automatically');
+await screenshot('research-process-mechanisms-expanded-desktop');
+await call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});
+await noOverflow();
+if (!(await evaluate(`(()=>{const cards=Array.from(document.querySelectorAll('.mechanism-card')).map(card=>card.getBoundingClientRect());const table=document.querySelector('.mechanism-details .table-scroll');return cards[1].top>=cards[0].bottom && Math.abs(cards[0].left-cards[1].left)<1 && cards.every(card=>card.right<=innerWidth) && table.scrollWidth>table.clientWidth})()`))) throw new Error('Mobile mechanism cards or expanded metric table overflow their own column');
+await screenshot('research-process-mechanisms-expanded-mobile');
+await evaluate(`document.querySelector('.mechanism-details').open=false;true`);
+await noOverflow();
+await screenshot('research-process-mechanisms-mobile');
+await call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
+await call('Page.reload');
+await waitFor(`document.querySelector('.mechanism-card h3')?.textContent.startsWith('<b>译文</b>')`);
+// Natural-language settings work in the browser; switching languages never generates.
+await call('Page.navigate', {url:origin+'/instances/1/reading'});
+await waitFor(`document.querySelector('[name="target_language"]') !== null`);
+await evaluate(`document.querySelector('[name="target_language"]').value='ja';document.querySelector('form[action$="/translation/configure"]').requestSubmit();true`);
+await waitFor(`document.querySelector('[name="target_language"]')?.value==='ja' && document.querySelector('[data-translation-status]')?.textContent.includes('ja')`);
+await call('Page.navigate', {url:origin+'/instances/1/results'});
+await waitFor(`document.querySelector('.mechanism-card h3')?.textContent==='Transport-driven response' && !document.querySelector('[data-translation-start]').disabled`);
+await call('Page.navigate', {url:origin+'/instances/1/reading'});
+await waitFor(`document.querySelector('[name="target_language"]')?.value==='ja'`);
+await evaluate(`document.querySelector('[name="target_language"]').value='zh-CN';document.querySelector('form[action$="/translation/configure"]').requestSubmit();true`);
+await waitFor(`document.querySelector('[name="target_language"]')?.value==='zh-CN' && document.querySelector('[data-translation-status]')?.textContent.includes('zh-CN')`);
+await call('Page.navigate', {url:origin+'/instances/1/results'});
+await waitFor(`document.querySelector('.mechanism-card h3')?.textContent.startsWith('<b>译文</b>')`);
+
+await call('Page.navigate', {url:origin+'/instances/1/'});
+await waitFor(`document.getElementById('live-hero')?.innerText.includes('本次控制请求已停止推进') && document.querySelector('[data-live-url]')?.dataset.state==='connected'`);
 ws.close();
 if (rendered.includes('{\"type\"')) throw new Error('Raw JSON appeared in the normal progress panel');
 if (!rendered.includes('Public browser fixture')) throw new Error('Public event did not render after append: ' + rendered);
@@ -763,7 +945,8 @@ console.log(rendered);
         checked = subprocess.run([node, '--input-type=module', '-e', script, str(port), origin, str(record / 'native.jsonl')],
             env=dict(os.environ, SCID_TEST_UI_MANAGEMENT_TOKEN=ui.management_token,
                 SCID_TEST_INSTANCE_ROOT=str(root), SCID_TEST_PUBLIC_ROOT=str(workspace / 'public'),
-                SCID_TEST_CONFIG_PATH=str(config), SCID_TEST_LOG_DIR=str(log_dir), SCID_TEST_ADVANCE=str(advance)),
+                SCID_TEST_CONFIG_PATH=str(config), SCID_TEST_LOG_DIR=str(log_dir), SCID_TEST_ADVANCE=str(advance),
+                SCID_TEST_TRANSLATION_CLICK=str(translation_permission)),
             capture_output=True, text=True, timeout=45)
         assert checked.returncode == 0, checked.stderr
         assert '已连接' in checked.stdout
@@ -782,3 +965,12 @@ console.log(rendered);
         browser_stderr.close()
         browser_environment.cleanup()
     assert not thread.is_alive() and not errors
+    assert translation_calls and all(explicit for explicit, _ in translation_calls)
+    assert all(not source.startswith('Updated public observation.') for _, texts in translation_calls for source in texts)
+    # Restart the application cache independently; cached fields require no provider.
+    with_service = ui_translation.TranslationService(workspace / '.scid-ui')
+    try:
+        assert all(entry['status'] == 'cached' for entry in with_service.lookup(
+            ['Transport-driven response', 'Line\r\nend', 'Line\nend'])['entries'])
+    finally:
+        with_service.close()

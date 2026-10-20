@@ -113,8 +113,9 @@ def test_workspace_loaded_state_and_mounted_stream(tmp_path):
         assert b'data-follow-latest="true"' not in fixed
 
 
-def test_shared_snapshot_cache_reuses_unchanged_reads_and_invalidates_metadata(tmp_path, monkeypatch):
-    monkeypatch.setattr(live, 'INTERVAL', 0)
+def test_shared_snapshot_cache_reuses_briefly_then_reads_saved_state_without_tree_scan(tmp_path, monkeypatch):
+    now = [100.]
+    monkeypatch.setattr(live.time, 'monotonic', lambda: now[0])
     calls = []
     cache = live.SnapshotCache()
     def load():
@@ -123,6 +124,7 @@ def test_shared_snapshot_cache_reuses_unchanged_reads_and_invalidates_metadata(t
     assert cache.read(tmp_path, load) == {'public': 1}
     assert cache.read(tmp_path, load) == {'public': 1}
     (tmp_path / 'control.json').write_text('{}')
+    now[0] += live.INTERVAL
     assert cache.read(tmp_path, load) == {'public': 2}
     assert len(calls) == 2
 

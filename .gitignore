@@ -64,3 +64,6 @@ Thumbs.db
 /docs/reference-data/
 /docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md
 /docs/architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml
+
+# Local application reading settings and translation cache
+.scid-ui/

@@ -168,6 +168,7 @@ def main(argv=None):
     ui_source.add_argument('--workspace', type=Path, help='Existing explicit directory; opens management before research preparation')
     serve.add_argument('--instance-root', type=Path, action='append', default=[], help='Additional explicit instance choice; repeatable, no directory discovery')
     serve.add_argument('--approval-secret-file', type=Path, help='Operator-owned regular 0600 browser host key; defaults to frozen ui.approval_secret_file')
+    serve.add_argument('--translation-config', type=Path, help='Optional application translation TOML; independent of frozen scientific profiles')
     serve.add_argument('--port', type=int, help='Loopback port; defaults to frozen ui.port or an available port')
     export = commands.add_parser('archive-export', help='Copy quiescent framework originals to a new inert read-only directory package; no writable restore')
     export.add_argument('--root', type=Path, required=True)
@@ -270,6 +271,9 @@ def main(argv=None):
                 raise ValueError('UI port must be between 0 and 65535')
             from . import instance_ui
             options = dict(workspace=True) if workspace_ui else {}
+            if args.translation_config is not None:
+                from . import ui_translation
+                options["translation_config"] = ui_translation.load_config(args.translation_config)
             result = instance_ui.serve(args.workspace if workspace_ui else root,
                 secret_file=Path(secret_file), port=port, instance_roots=args.instance_root, **options)
         elif args.command == 'progress':
