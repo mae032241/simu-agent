@@ -121,7 +121,6 @@ def main(argv=None):
     startup.add_argument('--step',type=int,required=True)
     startup.add_argument('--reconciliation',type=Path,required=True)
     startup.add_argument('--reconciliation-sha256',required=True)
-    startup.add_argument('--original-runtime-root',type=Path,required=True)
     startup.add_argument('--native-home',type=Path,required=True)
     startup.add_argument('--authorization-statement',required=True)
     collector = commands.add_parser('native-startup-collect', help='Collect an existing sealed final A and its exact proven unstarted delivery; never launch native work')
@@ -137,8 +136,6 @@ def main(argv=None):
     author.add_argument('--max-seconds', type=float, required=True)
     author.add_argument('--authorization-note', required=True)
     author.add_argument('--successor', action='store_true', help='Explicitly authorize the single second author-only turn; never automatic retry')
-    author.add_argument('--retained-implementation', type=Path, help='Exact retained old implementation manifest for this author permit')
-    author.add_argument('--retained-implementation-sha256', help='Explicit original manifest digest')
     author.add_argument('--authorization-statement', help='Original operator statement authorizing this one successor')
     accept = commands.add_parser('worker-output-accept', help='Explicitly accept exact already returned author2 bytes; never another native turn')
     accept.add_argument('--root', type=Path, required=True)
@@ -146,8 +143,6 @@ def main(argv=None):
     accept.add_argument('--attempt', type=int, choices=[2], required=True)
     accept.add_argument('--pending-sha256', required=True)
     accept.add_argument('--session', type=Path, required=True)
-    accept.add_argument('--retained-implementation', type=Path, required=True)
-    accept.add_argument('--retained-implementation-sha256', required=True)
     accept.add_argument('--authorization-note', required=True)
     accept.add_argument('--authorization-statement', required=True)
     closeout = commands.add_parser('closeout', help='Close exploration within the original remaining authorization')
@@ -343,17 +338,15 @@ def main(argv=None):
         elif args.command == 'native-startup-successor':
             from . import startup_recovery
             result = startup_recovery.start(root,args.step,reconciliation=args.reconciliation,
-                reconciliation_sha256=args.reconciliation_sha256,original_runtime_root=args.original_runtime_root,
+                reconciliation_sha256=args.reconciliation_sha256,
                 native_home=args.native_home,authorization_statement=args.authorization_statement)
         elif args.command == 'worker-closeout':
             result = controller.worker_closeout(root, args.step, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
                 authorization_note=args.authorization_note,successor=args.successor,
-                retained_implementation=args.retained_implementation,retained_implementation_sha256=args.retained_implementation_sha256,
                 authorization_statement=args.authorization_statement)
         elif args.command == 'worker-output-accept':
             result=controller.worker_output_accept(root,args.step,attempt=args.attempt,pending_sha256=args.pending_sha256,
-                session=args.session,retained_implementation=args.retained_implementation,
-                retained_implementation_sha256=args.retained_implementation_sha256,
+                session=args.session,
                 authorization_note=args.authorization_note,authorization_statement=args.authorization_statement)
         elif args.command == 'worker-resume':
             result = controller.worker_resume(root, args.step)

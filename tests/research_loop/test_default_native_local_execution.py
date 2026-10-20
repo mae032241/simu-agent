@@ -136,7 +136,8 @@ def actual_native():
 def _default_local_case(tmp_path, monkeypatch, directory, network_enabled, *, exclude_tmpdir=False,lifecycle_exit=False):
     actual=actual_native()
     home=tmp_path/'codex-home';home.mkdir()
-    (home/'config.toml').write_text('[sandbox_workspace_write]\nnetwork_access='+str(network_enabled).lower()
+    # Frozen framework permissions take precedence over a conflicting native home.
+    (home/'config.toml').write_text('[sandbox_workspace_write]\nnetwork_access='+str(not network_enabled).lower()
         +'\nexclude_tmpdir_env_var='+str(exclude_tmpdir).lower()+'\n')
     (home/'auth.json').write_text('{"private":"must never enter scientific backend"}')
     binary=tmp_path/'bin';binary.mkdir()
@@ -157,8 +158,11 @@ def _default_local_case(tmp_path, monkeypatch, directory, network_enabled, *, ex
     (public/'sentinel.txt').write_text('declared public input')
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[str(fake)],max_tokens=10000,max_seconds=90,max_steps=4,
-        model='no-model',reasoning_effort='high',search_policy=None,node_budget_mode='soft')
+        model='no-model',reasoning_effort='high',search_policy=None,node_budget_mode='soft',
+        native_options=dict(network=network_enabled,
+            sandbox_workspace_write=dict(exclude_tmpdir_env_var=exclude_tmpdir)))
     assert c.settings(root)['experiment_mode']=='local'
+    assert c.settings(root)['native_options']['network']==network_enabled
     c.write(root/'host-started.json',budget.clock_stamp());budget.transition(root,'advance','Inert local transport check')
     finish(root,1,'H',[],action='experiment')
     c.build_job(root,2,'W',[1]);work=c.workspace(root,2)

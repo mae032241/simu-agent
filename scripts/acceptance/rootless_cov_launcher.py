@@ -58,9 +58,8 @@ def load(p):
         n=Path(name)
         if n.is_absolute() or '..' in n.parts or hashlib.sha256(regular(public/n)).hexdigest()!=h:
             raise ValueError('frozen_public_input_changed')
-    for p,h in [(s['native'],s['native_sha256']),(s['code_mode_host']['path'],s['code_mode_host']['sha256'])]:
-        if file_digest(p)!=h:
-            raise ValueError('native_binary_changed')
+    for p in (s['native'],s['code_mode_host']['path']):
+        regular(p)
     return s
 
 def controlled(s, workspace, home):

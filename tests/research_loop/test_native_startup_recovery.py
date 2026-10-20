@@ -72,7 +72,7 @@ def failed_original(tmp_path,root,job,anchor,home):
     outcome['final_a_completion']=budget.final_a_receipt(budget.final_a_barrier(root),intent,dict(input_tokens=0,cached_input_tokens=0,output_tokens=0),outcome['usage'])
     c.write(record/'native-outcome.json',outcome);budget.inactive(root,'fixture failed startup')
     old=tmp_path/'old-runtime';package=old/'lib/python3.12/site-packages/scidiscovery/research_loop';package.mkdir(parents=True,exist_ok=True)
-    for name in recovery.ORIGINAL_FILES:shutil.copyfile(Path(recovery.__file__).parent/name,package/name)
+    for name in ('formal_review.py','contracts.py','native.py','continuation.py','backends.py'):shutil.copyfile(Path(recovery.__file__).parent/name,package/name)
     originals=recovery._originals(root,3)
     report=dict(version=1,kind='native_startup_engineering_reconciliation',author='Independent fixture engineering reviewer',
         subject=dict(goal_id=c.settings(root)['goal_id'],step=3,role='A',attempt=0,task_sha256=intent['task_sha256'],final_return=anchor['final_return']),
@@ -83,7 +83,7 @@ def failed_original(tmp_path,root,job,anchor,home):
             finding='Deterministic fixture source fails before its provider submission function; empty logs are not the proof.')]),
         native_implementation_attribution=dict(postcall_sha256=c.digest(Path(sys.executable).resolve()),limitations=['Synthetic source attribution; no real provider claim.']))
     evidence=tmp_path/'reconciliation.json';c.write(evidence,report)
-    options=dict(reconciliation=evidence,reconciliation_sha256=c.digest(evidence),original_runtime_root=old,
+    options=dict(reconciliation=evidence,reconciliation_sha256=c.digest(evidence),
         native_home=home,authorization_statement='Accept this exact independent engineering reconciliation and its limitations for one first model submission only.')
     return root,options
 
@@ -94,7 +94,7 @@ def scene(tmp_path, *, unknown=False, action='finish', legacy=False, review=Fals
     from scidiscovery.operations import review_rules
     package=tmp_path/'old-runtime/lib/python3.12/site-packages/scidiscovery/research_loop'
     package.mkdir(parents=True)
-    for name in recovery.ORIGINAL_FILES:shutil.copyfile(Path(recovery.__file__).parent/name,package/name)
+    for name in ('formal_review.py','contracts.py','native.py','continuation.py','backends.py'):shutil.copyfile(Path(recovery.__file__).parent/name,package/name)
     rules=package.parent/'operations/review_rules.py';rules.parent.mkdir()
     shutil.copyfile(review_rules.__file__,rules)
     frozen=formal_review._contract()
@@ -141,8 +141,12 @@ def test_successor_unknown_remains_blocking_and_is_never_restarted(tmp_path):
     root,options=scene(tmp_path,unknown=True);saved=originals(root)
     first=recovery.start(root,3,**options)
     assert first['status']=='closeout_native_unsealed'
-    assert native.usage(root)['unknown_steps']==[3] and native.usage(root)['blocking_unknown_steps']==[3]
+    assert native.usage(root)['unknown_steps']==[3]
+    current=execution.record(root,3)
+    outcome=(current/'native-outcome.json').read_bytes()
     assert recovery.start(root,3,**options)['status']=='closeout_native_unsealed'
+    assert (current/'native-outcome.json').read_bytes()==outcome
+    assert len(execution.records(root,3))==2
     assert (c.workspace(root,3)/'work/submission-count').read_text()=='one\n'
     assert all(file.read_bytes()==data for file,data in saved.items())
     assert not (execution.origin(root,3)/'continuations/002').exists()
@@ -160,15 +164,26 @@ def test_empty_stream_null_thread_and_missing_meter_do_not_authorize_successor(t
     with pytest.raises(ValueError):recovery.start(root,3,**options)
     assert not recovery.path(root,3).exists()
     assert not (execution.origin(root,3)/'continuations/001/native-intent.json').exists()
-    assert native.usage(root)['blocking_unknown_steps']==[3]
+    assert native.usage(root)['unknown_steps']==[3]
+    assert len(execution.records(root,3))==1
 
 
-def test_old_runtime_or_frozen_configuration_tampering_rejects_collection(tmp_path):
+def test_runtime_upgrade_preserves_original_result_but_configuration_tamper_fails(tmp_path):
     root,options=scene(tmp_path)
-    recovery.start(root,3,**options)
+    result=recovery.start(root,3,**options)
     permit=recovery.validate(root,3)
-    original=Path(permit['original_implementation'][0]['path']);original.write_text(original.read_text()+'\n# tampered\n')
-    with pytest.raises(ValueError,match='changed'):recovery.start(root,3,**options)
+    current=execution.record(root,3)
+    outcome=(current/'native-outcome.json').read_bytes()
+    reported=native.usage(root)['observed_tokens']
+    original=tmp_path/'old-runtime/lib/python3.12/site-packages/scidiscovery/research_loop/native.py'
+    original.unlink()
+    assert recovery.start(root,3,**options)['status']==result['status']
+    assert (current/'native-outcome.json').read_bytes()==outcome
+    assert native.usage(root)['observed_tokens']==reported
+    assert len(execution.records(root,3))==2
+    assert (c.workspace(root,3)/'work/submission-count').read_text()=='one\n'
+    home=Path(permit['native_home']);(home/'config.toml').write_text('changed permissions')
+    with pytest.raises(ValueError,match='configuration changed'):recovery.start(root,3,**options)
 
 
 def test_old_legacy_action_cannot_open_scientific_audit_or_wait_loop(tmp_path):
@@ -207,14 +222,16 @@ def test_invalid_original_inputs_fail_before_publishing_permit(tmp_path,monkeypa
     monkeypatch.setattr(c,'_validate_inputs',invalid)
     with pytest.raises(ValueError,match='exact input failure'):recovery.start(root,3,**options)
     assert not recovery.path(root,3).exists()
-    assert native.usage(root)['blocking_unknown_steps']==[3]
+    assert native.usage(root)['unknown_steps']==[3]
+    assert len(execution.records(root,3))==1
 
 
 def test_enabled_old_review_contract_is_exactly_bound_without_new_review(tmp_path):
     from scidiscovery.research_loop import formal_review,continuation
     root,options=scene(tmp_path,legacy=True,review=True)
     frozen=(root/'qualification/review-contract.json').read_bytes()
-    with pytest.raises(ValueError,match='formal review contract'):continuation.validate_task(root,3)
+    assert continuation.validate_task(root,3)==c.read(root/'jobs/003.json')
+    assert formal_review.contract(root)==c.settings(root)['formal_review_policy']['contract']
     assert not recovery.path(root,3).exists()
     result=recovery.start(root,3,**options)
     assert result['status']=='final_a_completed',json.dumps(result,indent=2)
@@ -227,10 +244,10 @@ def test_enabled_old_review_contract_is_exactly_bound_without_new_review(tmp_pat
 
 
 @pytest.mark.parametrize('mutation',['old_code','scientific_semantics'])
-def test_old_review_contract_compatibility_rejects_changed_code_or_semantics(tmp_path,mutation):
+def test_review_preserves_semantics_across_runtime_upgrades(tmp_path,mutation):
     root,options=scene(tmp_path,legacy=True,review=True)
     if mutation=='old_code':
-        file=options['original_runtime_root']/'lib/python3.12/site-packages/scidiscovery/research_loop/native.py'
+        file=tmp_path/'old-runtime/lib/python3.12/site-packages/scidiscovery/research_loop/native.py'
         file.write_text(file.read_text()+'\n# changed original implementation\n')
     else:
         # Change the current scientific contract, leaving the old frozen receipt intact.
@@ -240,9 +257,9 @@ def test_old_review_contract_compatibility_rejects_changed_code_or_semantics(tmp
             with pytest.raises(ValueError,match='scientific review semantics'):recovery.start(root,3,**options)
         assert not recovery.path(root,3).exists()
         return
-    with pytest.raises(ValueError,match='review implementation'):recovery.start(root,3,**options)
-    assert not recovery.path(root,3).exists()
-    assert not (execution.origin(root,3)/'continuations/001/native-intent.json').exists()
+    recovery.start(root,3,**options)
+    assert recovery.path(root,3).exists()
+    assert (execution.origin(root,3)/'continuations/001/native-intent.json').exists()
 
 
 def external_startup(tmp_path):
@@ -271,7 +288,7 @@ def delivery_report(root,tmp_path):
         subject=dict(goal_id=c.settings(root)['goal_id'],step=3,native_attempt=1,action_seq=action['seq'],
             final_return=original['final_return'],**{key:action[key] for key in ('action_id','action_kind','operation_id','decision')}),
         originals={name:recovery._ref(file) for name,file in files.items()},
-        accepted_implementation=original['implementation'],
+        accepted_implementation=original.get('implementation',[]),
         additional_read_implementation=[recovery._ref(Path(recovery.__file__).with_name('delivery.py'))],
         control_ledger_prefix=[recovery._ref(root/'control-ledger'/f'{number:06d}.json') for number in range(1,action['seq']+1)],
         engineering_judgment=dict(delivery_dispatch='not_dispatched'),
@@ -381,3 +398,27 @@ def test_delivery_eligibility_still_rejects_changed_scientific_raw(tmp_path,monk
     with pytest.raises(ValueError):recovery.collect_delivery(root,3,**options)
     assert not recovery.collection_path(root,3).exists()
     assert not (root/'runs/submitted.json').exists()
+
+
+@pytest.mark.parametrize('attribution',[None,{},dict(postcall_sha256='x'*64,limitations=['Unknown original flow.']),dict(postcall_sha256='a'*64,limitations=[])])
+def test_startup_requires_original_source_attribution_independent_of_current_tool(tmp_path,attribution):
+    root,options=scene(tmp_path)
+    report=c.read(options['reconciliation'])
+    report['native_implementation_attribution']=attribution
+    c.write(options['reconciliation'],report);options['reconciliation_sha256']=c.digest(options['reconciliation'])
+    with pytest.raises(ValueError,match='source attribution'):
+        recovery.start(root,3,**options)
+    assert not recovery.path(root,3).exists()
+
+
+def test_startup_accepts_original_attribution_without_pinning_current_executable(tmp_path):
+    root,options=scene(tmp_path)
+    report=c.read(options['reconciliation'])
+    report['native_implementation_attribution']['postcall_sha256']='a'*64
+    c.write(options['reconciliation'],report);options['reconciliation_sha256']=c.digest(options['reconciliation'])
+    recovery.start(root,3,**options)
+    permit=recovery.validate(root,3)
+    assert permit['native_program']['sha256']=='a'*64
+    changed=dict(permit,native_program=dict(permit['native_program'],sha256='b'*64))
+    with pytest.raises(ValueError,match='source attribution'):
+        recovery.validate(root,3,changed)

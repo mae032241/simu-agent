@@ -11,7 +11,6 @@ from dataclasses import asdict
 import fcntl
 import hashlib
 import importlib.metadata
-import importlib
 import inspect
 import json
 import os
@@ -185,60 +184,23 @@ def operator_configuration(value):
         raise ValueError('Operator execution configuration cannot supply host identity or admission fields')
     # Round-trip also rejects non-JSON/nonfinite settings before creating an instance.
     body=json.loads(encoded(value))
-    body['implementation']=registration_identity(body['executor'])
+    registration(body['executor'])
     return body
 
 
-def _registration_assets(factory):
-    module=importlib.import_module(factory.__module__.partition('.')[0])
-    if not getattr(module,'__file__',None) or Path(inspect.getfile(factory)).suffix!='.py':
-        raise UnsupportedExecution('Execution factory requires an inspectable regular Python package')
-    paths=list(getattr(module,'__path__',()))
-    if paths:
-        if len(paths)!=1:raise UnsupportedExecution('Execution factory requires one exact Python package root')
-        root=Path(paths[0]).absolute()
-        if root.resolve()!=root:raise IntegrityError('Execution implementation package root changed')
-        entries=sorted(root.rglob('*'))
-        if any(path.is_symlink() for path in entries):raise IntegrityError('Registered package contains a symbolic link')
-        assets=[path for path in entries if path.suffix=='.py']
-    else:
-        assets=[Path(inspect.getfile(factory)).absolute()]
-    if not assets or any(path.suffix!='.py' for path in assets):
-        raise UnsupportedExecution('Execution factory requires inspectable Python source')
-    return assets
-
-
-def registration_identity(executor):
-    """Bind registered plugin Python package code; no factory build or backend IO.
-
-    Namespace/multi-root and extension factories are unsupported here. This is not
-    an identity for third-party dependencies or dynamically accessed resources.
-    The real adapter's declared assets/capabilities are additionally frozen later.
-    """
-    declared,_=registration(executor)
-    factory=declared.factory.build
-    return dict(plugin_version=declared.version,factory=factory.__module__+':'+factory.__qualname__,
-        code=[proof(path) for path in _registration_assets(factory)])
-
-
 def validate_operator_configuration(value):
-    if not isinstance(value,dict) or set(value)!={'executor','configuration','implementation'}:
+    if not isinstance(value,dict) or set(value) not in ({'executor','configuration'},{'executor','configuration','implementation'}):
         raise IntegrityError('Frozen operator execution configuration is malformed')
-    if operator_configuration({key:value[key] for key in ('executor','configuration')})!=value:
-        raise IntegrityError('Frozen registered execution implementation or operator configuration changed')
+    if not isinstance(value['configuration'],dict) or HOST_CONFIGURATION_FIELDS.intersection(value['configuration']):
+        raise IntegrityError('Frozen operator execution configuration is malformed')
+    encoded(value)
+    registration(value['executor'])
     return value
 
 
-def _validate_registered_implementation(value,executor):
-    """Compare the package path set, then hash each frozen original once."""
-    declared,_=registration(executor);factory=declared.factory.build
-    if (not isinstance(value,dict) or set(value)!={'plugin_version','factory','code'}
-            or value['plugin_version']!=declared.version
-            or value['factory']!=factory.__module__+':'+factory.__qualname__
-            or not isinstance(value['code'],list) or not value['code']
-            or [str(path) for path in _registration_assets(factory)]!=[item['path'] for item in value['code']]
-            or [proof(item['path']) for item in value['code']]!=value['code']):
-        raise IntegrityError('Frozen registered package implementation changed')
+def _interface_contract(value):
+    """Installed source/version metadata does not amend an execution contract."""
+    return {key:item for key,item in value.items() if key not in {'code','plugin_version'}}
 
 
 def _adapter(config, path, *, host_services=None):
@@ -482,12 +444,10 @@ def _collected_view(config, call_id, observation, adapter):
 
 
 def freeze(config, executor, *, path=None):
-    """Host preparation only: freeze selected factory, code, configuration and flags."""
+    """Host preparation only: freeze selected executor, configuration and flags."""
     from .protocol import require_scope
     require_scope(config.get('scope'))
     value = dict(config)
-    if 'registered_implementation' in value:
-        _validate_registered_implementation(value['registered_implementation'],executor)
     from . import breadth
     breadth.validate(value.get('breadth'))
     value.setdefault('admission',dict(version=ADMISSION_VERSION,mode='unavailable'))
@@ -502,23 +462,6 @@ def freeze(config, executor, *, path=None):
         raise ValueError('Finite frozen execution time limit required')
     value['execution_interface'] = dict(executor=executor)
     declared, adapter, body = _adapter(value, path or Path(config['record_dir']).parent / 'config.json')
-    assets = [Path(inspect.getfile(declared.factory.build)).resolve(),
-              Path(inspect.getfile(type(adapter))).resolve(), Path(__file__).resolve(), Path(inspect.getfile(breadth)).resolve(),
-              Path(inspect.getfile(execution_status)).resolve()]
-    assets += [Path(item).resolve() for item in adapter.code_assets()]
-    from . import replay_check
-    assets.append(Path(replay_check.__file__).resolve())
-    assets.append(Path(instance_owner.__file__).resolve())
-    if value.get('worker_view_version') == 1:
-        from . import experiment_client,worker_execution_bridge
-        assets.extend(Path(item.__file__).resolve() for item in (experiment_client,worker_execution_bridge))
-        assets.extend(Path(item['path']) for item in value.get('host_launch_implementation',[]))
-    if any(getattr(item,'key',None)==INPUT_SOURCES_KEY for item in adapter.capabilities()):
-        from . import execution_inputs, qualification
-        assets.extend([Path(execution_inputs.__file__).resolve(), Path(qualification.__file__).resolve()])
-    if value.get('host_execution_authority') is not None:
-        from . import execution_authority
-        assets.extend(Path(item['path']) for item in execution_authority.implementation())
     result_protocol=getattr(adapter,'result_protocol',None)
     if result_protocol is not None and (not isinstance(result_protocol,str) or not 0<len(result_protocol.encode())<=160):
         raise ValueError('An execution result protocol requires an explicit bounded identifier')
@@ -527,8 +470,7 @@ def freeze(config, executor, *, path=None):
         terminal_evidence=getattr(adapter,'terminal_evidence_kind','adapter_result'),
         result_protocol=result_protocol,
         config_sha256=hashlib.sha256(encoded(body)).hexdigest(),
-        capabilities=asdict(lifecycle_capabilities(adapter)),
-        code=[proof(item) for item in dict.fromkeys(assets)])
+        capabilities=asdict(lifecycle_capabilities(adapter)))
     if 'registered_implementation' in value or adapter.capabilities():
         value['execution_interface']['public_capabilities']=_public_capabilities(adapter)
     return value
@@ -562,7 +504,7 @@ def configure(root,step,executor,config,output):
         if executor!=selected['executor'] or config!=selected['configuration']:
             raise IntegrityError('Host execution configuration differs from the frozen operator selection')
         config=expected
-        implementation=dict(registered_implementation=selected['implementation'])
+        if 'implementation' in selected:implementation=dict(registered_implementation=selected['implementation'])
     admission=budget.review_configuration(root,job)
     from .protocol import stage_scope
     from . import experiment_client
@@ -573,8 +515,10 @@ def configure(root,step,executor,config,output):
     if job.get('worker_view_version') == 1:
         from . import experiment_client
         value['worker_view_version'] = 1
-        value['host_launch_implementation']=[proof(Path(argument).absolute())
-            for argument in c.settings(root)['native_launcher_argv'] if Path(argument).suffix=='.py']
+        original=record/'experiment-config.json'
+        if original.exists():
+            retained=c.read(c.regular(original))
+            if 'host_launch_implementation' in retained:value['host_launch_implementation']=retained['host_launch_implementation']
         if Path(output).absolute().parent==c.workspace(root,step)/'work':
             if experiment_client.location(output) != (root, step):
                 raise IntegrityError('Execution client differs from its canonical task workspace')
@@ -594,7 +538,12 @@ def configure(root,step,executor,config,output):
     for path in ((record/'experiment-config.json',projection) if client is not None else (Path(output),record/'experiment-config.json',projection)):
         if path.exists():
             old=c.read(c.regular(path))
-            if old==value:continue
+            if (old==value or
+                    {key:item for key,item in old.items() if key!='execution_interface'}==
+                    {key:item for key,item in value.items() if key!='execution_interface'}
+                    and _interface_contract(old['execution_interface'])==_interface_contract(value['execution_interface'])):
+                value=old
+                continue
             if path in (record/'experiment-config.json',projection) or old.get('scope')!=value['scope']:
                 raise IntegrityError('Frozen experiment configuration changed')
         updates.append(path)
@@ -622,8 +571,11 @@ def load(config, *, path=None, host_services=None):
     if config.get('host_execution_authority') is not None:
         from . import execution_authority
         execution_authority.host_services(config)
-    if freeze({key: value for key, value in config.items() if key != 'execution_interface'}, selected['executor'], path=path) != config:
-        raise IntegrityError('Frozen execution implementation or configuration changed')
+    current=freeze({key: value for key, value in config.items() if key != 'execution_interface'}, selected['executor'], path=path)
+    if ({key:value for key,value in current.items() if key!='execution_interface'} !=
+            {key:value for key,value in config.items() if key!='execution_interface'}
+            or _interface_contract(current['execution_interface']) != _interface_contract(selected)):
+        raise IntegrityError('Frozen execution contract or configuration changed')
     _, adapter, _ = _adapter(config, path or Path(config['record_dir']).parent / 'config.json',host_services=host_services)
     return adapter
 

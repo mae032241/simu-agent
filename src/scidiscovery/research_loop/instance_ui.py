@@ -413,16 +413,32 @@ class InstanceUI:
             payload = json.load(original.stream); original.check()
         return step if job['role'] == 'A' and not job.get('formal_review') and payload.get('next_action') == 'finish' else None
 
-    def _progress_page(self, step, attempt, cursor):
+    def _progress_value(self, step, attempt, cursor):
         value = progress.read(self.root, step, attempt=attempt, cursor=cursor)
+        state = value.get('state') if value.get('observation_state') != 'unavailable' else None
+        lifecycle = {
+            'unstarted': '阶段已准备，尚未开始', 'intent_present': '已记录任务意图，运行状态待确认',
+            'running': '正在运行', 'unknown': '运行状态未确认；请核对原任务，勿重复提交',
+            'native_outcome_present': '本次助手工作已结束，阶段结论尚未记录',
+            'seal_present_unverified': '已有阶段结论；请查看阶段结论原文',
+        }.get(state, '运行状态暂不可确认；请核对原任务，勿重复提交')
+        stream = {'ready': '公开日志已连接', 'partial_line': '正在接收公开消息',
+            'missing': '等待助手输出' if state == 'running' else '暂无公开日志',
+            'unavailable': '公开进度暂不可用', 'replaced': '日志来源已变化',
+            'truncated': '日志已截短'}.get(value['stream_state'], '公开日志状态待确认')
+        value['progress_label'] = lifecycle + '；' + stream
+        return value
+
+    def _progress_page(self, step, attempt, cursor):
+        value = self._progress_value(step, attempt, cursor)
         base = '/nodes/' + str(step) + '/progress?attempt=' + str(attempt)
         body = self._navigation() + '<p>第 ' + str(step) + ' 阶段 · ' + self._role(value['role']) + '</p>'
         body += '<p class="note">这里显示助手公开的工作文本和工具状态；阶段完成后请查看“阶段结论”。</p>'
         body += '<p><a href="' + base + '">重新读取公开进度</a> · <a href="/nodes/' + str(step) + '">查看此阶段</a></p>'
-        body += '<section data-progress="/nodes/' + str(step) + '/events?attempt=' + str(attempt) + '" data-cursor="' + html.escape(value.get('cursor') or '', quote=True) + '"><h2>助手正在做什么</h2><p data-stream-status>正在连接进度；最多展示最近 200 条公开消息</p><div data-events>'
+        body += '<section data-progress="/nodes/' + str(step) + '/events?attempt=' + str(attempt) + '" data-cursor="' + html.escape(value.get('cursor') or '', quote=True) + '"><h2>助手公开工作记录</h2><p data-stream-status>' + html.escape(value['progress_label']) + '</p><div data-events>'
         body += ''.join(self._event_html(item) for item in value['events'][-200:]) + '</div>'
         if not value['events']:
-            body += '<p class="note">还没有公开消息，开始运行后会在这里更新。</p>'
+            body += '<p class="note">此阶段没有可显示的公开消息。</p>'
         body += '<details><summary>高级：公开事件详情</summary><pre data-raw-events>' + html.escape(json.dumps(value['events'][-200:], ensure_ascii=False, indent=2)) + '</pre></details></section>'
         if value.get('cursor') and not value.get('restart_required'):
             body += '<a href="' + base + '&amp;cursor=' + quote(value['cursor'], safe='') + '">手动读取下一批消息</a>'
@@ -432,7 +448,7 @@ class InstanceUI:
 
     def _following_progress_page(self):
         body = self._navigation() + '<p>这里自动跟随当前阶段；打开各阶段的公开进度链接可固定查看历史记录。</p>'
-        body += '<section data-progress="" data-follow-latest="true" data-cursor=""><h2 data-progress-heading>当前助手的公开工作</h2><p data-stream-status>等待当前阶段；状态会自动更新</p><div data-events></div>'
+        body += '<section data-progress="" data-follow-latest="true" data-cursor=""><h2 data-progress-heading>当前助手的公开工作</h2><p data-stream-status>正在读取当前阶段状态…</p><div data-events></div>'
         body += '<details><summary>高级：公开事件详情</summary><pre data-raw-events>[]</pre></details></section>'
         return 200, self._page('实时进度', body, live=True), {}
 
@@ -549,7 +565,11 @@ class InstanceUI:
             notices = {'accepted':'已接受请求，正在安排研究工作。', 'running':'控制请求仍在处理；研究状态以上方阶段为准。',
                 'completed':'本次控制请求已结束；研究结论以上方阶段为准。', 'applied':'本次控制请求已处理。',
                 'failed':'本次请求未完成，请查看控制请求记录。', 'pause_requested':'暂停已请求；当前已接受的工作完成后停止。'}
-            hero += '<p class="note">' + notices.get(receipt.get('status'), '控制请求已记录。') + '</p>'
+            notice = notices.get(receipt.get('status'), '控制请求已记录。')
+            if (receipt.get('kind') == 'controller' and receipt.get('status') == 'applied'
+                    and (receipt.get('result') or {}).get('status') == 'native_stopped'):
+                notice = '本次控制请求已停止推进：原生工作尚未封存阶段结论。请核对原任务，勿重复提交。'
+            hero += '<p class="note">' + notice + '</p>'
         if current and current.get('stop_reason'):
             hero += '<p class="gap">工作停止说明：' + html.escape(clean(current['stop_reason'])) + '</p>'
         hero += '</section>'
@@ -787,7 +807,7 @@ class InstanceUI:
                     raise ValueError('Exact progress attempt required')
                 cursor = query.get('cursor', [None])[0]
                 if parts[1:] == ['events']:
-                    value = progress.read(self.root, step, attempt=int(attempt), cursor=cursor)
+                    value = self._progress_value(step, int(attempt), cursor)
                     return 200, json.dumps(value, ensure_ascii=False).encode(), {'Content-Type': 'application/json; charset=utf-8'}
                 return self._progress_page(step, int(attempt), cursor)
             if parts[1:]==['science'] and not parsed.query:

@@ -10,7 +10,7 @@ import pytest
 
 from execution_fixtures import execution_registry, remote_registry
 from test_history_handoff import finish
-from scidiscovery.research_loop import (checkpoint, contracts as c, controller, execution, experiments as e,
+from scidiscovery.research_loop import (budget, checkpoint, contracts as c, controller, execution, experiments as e,
     history, native, qualification as q, search, worker_delivery)
 
 
@@ -26,7 +26,9 @@ def case(tmp_path, monkeypatch, outcome='known_success', executor='remote_execut
         commitments=[dict(label=label,minimal_test='Compare the declared synthetic observation',existing_ref=None)
             for label in ('P','Q')],focus=dict(label=None,action='screen')))
     job=c.build_job(root,2,'W',[1]);record=execution.record(root,2)
-    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json')))
+    node_anchor=budget.accept_node(root,job)
+    anchor=dict(budget_slice=node_anchor) if node_anchor is not None else dict(search_slice=search.accept(root,job))
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json'),**anchor))
     config_path=c.workspace(root,2)/'work/experiment-config.json'
     options=dict(outcome=outcome) if executor.startswith('remote_') else dict(run_argv=[sys.executable])
     options.update(extra or {})

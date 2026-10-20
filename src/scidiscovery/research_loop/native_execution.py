@@ -147,7 +147,7 @@ def prepare(root, step, record, work, home, args, *, standard, resume_position=N
     snapshot=record/'native-execution-permissions.json'
     value=dict(version=1,task_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),
         native_attempt=dict(number=len(execution.records(root,step))-1,execution_key=execution.identity(root,step)),
-        intent=e.proof(record/'native-intent.json'),implementation=e.proof(Path(__file__).resolve()),
+        intent=e.proof(record/'native-intent.json'),
         native_argv=list(args),home=str(home),workspace=str(work))
     public=Path(c.read(c.regular(root/'jobs'/f'{step:03d}.json'))['public_root'])
     native_args=list(args)
@@ -170,7 +170,7 @@ def prepare(root, step, record, work, home, args, *, standard, resume_position=N
         helper=_native_program(args[:1])
         bwrap=shutil.which('bwrap')
         if bwrap is None:raise e.UnsupportedExecution('The native scientific namespace wrapper is unavailable')
-        value.update(policy=policy,permission_sources=originals,native=e.proof(helper),bwrap=e.proof(Path(bwrap).resolve()),
+        value.update(policy=policy,permission_sources=originals,native=dict(path=str(helper)),bwrap=dict(path=str(Path(bwrap).resolve())),
             python=str(Path(sys.executable).absolute()),runtime_roots=list(dict.fromkeys((sys.base_prefix,sys.prefix))))
         _public_root(public,root,work,home,[Path(path) for path in
             ('/usr','/bin','/lib','/lib64','/etc/resolv.conf','/etc/hosts','/etc/ssl/certs',
@@ -209,13 +209,12 @@ def prepare(root, step, record, work, home, args, *, standard, resume_position=N
             raise e.IntegrityError('Original native permissions changed')
         if (e.proof(record/'native-intent.json')!=value['intent']
                 or c.digest(root/'jobs'/f'{step:03d}.json')!=value['task_sha256']
-                or e.proof(Path(__file__).resolve())!=value['implementation']
                 or accepted.get('native_attempt')!=value['native_attempt']
                 or accepted.get('scope')!=config['scope']
                 or config['scope']['job_sha256']!=value['task_sha256']):
             raise e.IntegrityError('Scientific launch differs from its original native attempt')
         if 'unsupported' in value:raise e.UnsupportedExecution(value['unsupported'])
-        for key in ('native','bwrap','backend_configuration'):
+        for key in ('backend_configuration',):
             if e.proof(value[key]['path'])!=value[key]:
                 raise e.IntegrityError('Original native sandbox implementation changed')
         return _launch(value,config,accepted,command,cwd,public=public,root=root)

@@ -155,7 +155,9 @@ managed policy、额外可写根以及无法忠实投影后端权限的自定义
 | 归档与同宿主冷恢复 | `instance_archive.py`、`instance_owner.py`、共享 `archive_io.py` |
 
 上述文件均位于 `src/scidiscovery/research_loop/`，另有说明者除外。
-`scidiscovery.execution_interfaces` 发现执行接口，薄实例冻结精确选择及实现身份。
+`scidiscovery.execution_interfaces` 发现执行接口，薄实例冻结所选执行器、操作者配置及执行合同。
+框架、插件及工具源码升级不使科学任务或已接受调用失效；历史源码指纹仅作元数据，不作准入条件。
+任务、输入、成果原件、声明权限、有限预算及外部调用身份仍须精确绑定，升级不授权重放未知调用。
 保留的 Operation 编译器、插件声明、共享 schema、抽取的回调及独立存储原语不是旧 MCP 服务入口。
 `artifact_agent/service` 旧 Run/SQL 宿主及运行辅助模块已删除；存储库保留不表示薄链依赖它作为宿主。
 不按目录名删除 adapter、来源规则或存储校验。Operation ABI 以 `operations/spec.py` 为准，当前为 26；插件接口见[API](PLUGIN_RUNTIME_API.md)。

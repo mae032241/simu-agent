@@ -162,6 +162,58 @@ def test_generic_descriptor_does_not_require_cov_config_fields(tmp_path):
     assert result['adapter']['target'] == supplied['target']
 
 
+def test_delivery_tool_upgrade_preserves_scientific_input_checks(tmp_path,monkeypatch):
+    adapter=tmp_path/'adapter.py';adapter.write_text('print("original tool")')
+    python=tmp_path/'python';python.write_text('original interpreter')
+    scientific=tmp_path/'data.csv';scientific.write_text('x,y\n1,2\n')
+    spec=delivery.policy(delivery_policy(dict(adapter=str(adapter),launcher_argv=[str(python),str(adapter)],
+        config=dict(python=str(python)),target={},source_roots=[str(tmp_path)],
+        inputs=[dict(label='runtime-python',path=str(python)),dict(label='harness/data.csv',path=str(scientific))])))['adapter']
+    runtime=next(item for item in spec['inputs'] if item['label']=='runtime-python')
+    assert 'sha256' not in runtime
+    runtime.update(sha256=c.digest(python),size_bytes=python.stat().st_size)  # An existing instance's old tool metadata.
+    monkeypatch.setattr(c,'settings',lambda root:dict(delivery_policy=dict(adapter=spec)))
+    python.write_text('upgraded interpreter')
+    adapter.write_text('print("upgraded tool")')
+    assert delivery._adapter(tmp_path)['config']==spec['config']
+    scientific.write_text('x,y\n1,999\n')
+    with pytest.raises(ValueError,match='public harness changed'):
+        delivery._adapter(tmp_path)
+
+
+@pytest.mark.parametrize('kind',['generic','cov'])
+def test_delivery_namespace_accepts_old_interpreter_metadata(tmp_path,monkeypatch,kind):
+    from scidiscovery.research_loop import generic_delivery
+    from scidiscovery.research_loop.protocol import CURRENT
+    stage=tmp_path/'stage';(stage/'inputs').mkdir(parents=True);(stage/'scratch').mkdir()
+    target=tmp_path/'target';target.mkdir()
+    python=Path(sys.executable)
+    proof=dict(label='runtime-python',invoked_path=str(python.absolute()),path=str(python.resolve()),sha256='0'*64)
+    request=dict(scope=dict(handoff_protocol=CURRENT),stage=str(stage),phase='confirm',inputs=[proof],
+        source_roots=[],config=dict(python=str(python)),target={})
+    if kind=='generic':
+        module=generic_delivery
+        request['config']['runtime_roots']=list(dict.fromkeys([sys.base_prefix,sys.prefix]))
+        request['target']=dict(directory=str(target))
+    else:
+        module=cov_delivery
+        runs=target/'runs';runs.mkdir()
+        submission=target/'submission';submission.mkdir()
+        request['target']=dict(runs=str(runs),submission=str(submission))
+    commands=[]
+    class NamespaceReady(Exception):pass
+    def capture(program,arguments):
+        commands.append((program,arguments))
+        raise NamespaceReady
+    monkeypatch.setattr(module.shutil,'which',lambda name:'/qualified/bwrap')
+    monkeypatch.setattr(module.os,'execv',capture)
+    with pytest.raises(NamespaceReady):module.isolate(request,str(Path(module.__file__).resolve()))
+    program,arguments=commands[0]
+    assert program=='/qualified/bwrap' and '--unshare-net' in arguments
+    assert arguments[arguments.index('--')+1]==str(python)
+    assert '--bind' not in arguments  # Confirmation preserves read-only delivery targets.
+
+
 @pytest.mark.parametrize('invalid', ['missing', 'nan', 'zero_submit', 'negative_margin'])
 def test_delivery_policy_rejects_incomplete_or_unbounded_limits(tmp_path, invalid):
     value = delivery_policy(None)

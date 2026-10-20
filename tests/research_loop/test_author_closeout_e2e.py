@@ -117,8 +117,8 @@ def scene(tmp_path,monkeypatch,mode):
     runtime_paths=list(dict.fromkeys([sys.base_prefix,str(Path(python).parent.parent),str(Path(c.__file__).resolve().parents[2]),str(metadata),*sites]))
     codehost=Path('/usr/bin/true').resolve()
     c.write(config,dict(scene_root=str(root),public_root=str(public),public_manifest=str(manifest),
-        runs_dir=str(root/'runs'),submission_dir=str(root/'submission'),native=str(fake),native_sha256=c.digest(fake),
-        code_mode_host=dict(path=str(codehost),sha256=c.digest(codehost)),task_python=python,scid_python=python,
+        runs_dir=str(root/'runs'),submission_dir=str(root/'submission'),native=str(fake),
+        code_mode_host=dict(path=str(codehost)),task_python=python,scid_python=python,
         runtime_paths=runtime_paths,model='fixture',reasoning_effort='high',profile='closeout-no-model',cov_receipt_channel='backend_file'))
     projection=origin/'experiment-config.json';original=projection.read_bytes();frozen=c.read(projection)
     configured=c.workspace(root,2)/'work/lineage-config.json'

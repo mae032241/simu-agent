@@ -192,7 +192,7 @@ def rebind(settings_path, launcher_path, work, scid_python, fault=None):
         path = Path('/usr/bin/true').resolve();host = dict(path=str(path), sha256=sha(path))
     venv = str(Path(scid_python).absolute().parent.parent)
     rebound = dict(config, scene_root=str(root), public_root=str(public), public_manifest=str(work / 'public-manifest.json'),
-        runs_dir=str(root / 'runs'), submission_dir=str(root / 'submission'), native=str(fake), native_sha256=sha(fake),
+        runs_dir=str(root / 'runs'), submission_dir=str(root / 'submission'), native=str(fake),
         code_mode_host=host, scid_python=scid_python,
         runtime_paths=list(dict.fromkeys([p for p in config['runtime_paths'] if Path(p).exists()] + [sys.base_prefix, venv])))
     (work / 'launcher.json').write_text(json.dumps(rebound, indent=2) + '\n')

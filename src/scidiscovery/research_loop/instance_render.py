@@ -50,8 +50,7 @@ async function poll(selectedGeneration) {
     if (!response.ok) throw new Error('公开进度暂不可用');
     const value = await response.json();
     if (selectedGeneration !== generation) return;
-    const labels = {ready:'已连接，正在更新', partial_line:'正在接收消息', missing:'等待助手输出', unavailable:'进度暂不可用', replaced:'日志来源已变化', truncated:'日志已截短'};
-    status.textContent = labels[value.stream_state] || '等待更新';
+    status.textContent = value.progress_label;
     for (const item of value.events) { rows.push(item); append(item); }
     if (rows.length > 200) rows.splice(0, rows.length - 200);
     panel.querySelector('[data-raw-events]').textContent = JSON.stringify(rows, null, 2);
@@ -63,12 +62,15 @@ async function poll(selectedGeneration) {
 function follow(current) {
   if (!panel?.dataset.followLatest) return;
   const next = current?.url || '';
-  if (next === progressURL) return;
+  if (next === progressURL) {
+    if (!current) panel.querySelector('[data-stream-status]').textContent = '尚无研究阶段；状态会自动更新';
+    return;
+  }
   generation++; window.clearTimeout(timer); progressURL = next; cursor = ''; rows = [];
   panel.querySelector('[data-events]').replaceChildren();
   panel.querySelector('[data-raw-events]').textContent = '[]';
   panel.querySelector('[data-progress-heading]').textContent = current ? '第 ' + current.step + ' 阶段 · ' + current.role + ' · 公开工作' : '当前助手的公开工作';
-  panel.querySelector('[data-stream-status]').textContent = current ? '正在连接当前阶段…' : '等待当前阶段；状态会自动更新';
+  panel.querySelector('[data-stream-status]').textContent = current ? '正在读取当前阶段状态…' : '尚无研究阶段；状态会自动更新';
   poll(generation);
 }
 if (panel && !panel.dataset.followLatest) poll(generation);

@@ -37,7 +37,6 @@ class DifferentExternalIdentity:
         detail='x'*self.config.get('contract_padding',0)
         if detail:schema['description']=detail
         return (AdapterCapability('opaque_input','execution','fixture.remote-input.v1',1,'application/schema+json',e.encoded(schema),dict(input='JSON object matching the public schema',detail=detail)),)
-    def code_assets(self):return [__file__]
     def prepare(self,payload,**options):
         if self.config.get('require_contract'):
             import jsonschema

@@ -177,14 +177,15 @@ def test_observer_timeout_and_output_bound_stop_without_model(scene, tmp_path, m
     assert history.capture(scene, job, {}, []) == receipt
 
 
-def test_observer_adapter_and_observation_tamper_are_not_rebuilt(scene, tmp_path):
+def test_observer_tool_upgrade_preserves_the_original_observation(scene, tmp_path):
     adapter = setup_observer(scene, tmp_path, 'print(\'{"candidates":[],"current_candidate":null,"actual_submission":null,"coverage":{"status":"complete","note":"Fixture"}}\')')
     source(scene)
     job = c.read(scene / 'jobs/002.json')
-    history.capture(scene, job, {}, [])
-    adapter.write_text('raise Exception("changed")')
-    with pytest.raises(ValueError, match='adapter changed'):
-        history.capture(scene, job, {}, [])
+    original=history.capture(scene, job, {}, [])
+    retained=(scene/original['path']).read_bytes()
+    adapter.write_text('raise Exception("upgraded tool must not rebuild an observation")')
+    assert history.capture(scene, job, {}, [])==original
+    assert (scene/original['path']).read_bytes()==retained
 
 
 def test_cov_adapter_uses_public_facts_and_keeps_unexported_code_unknown(scene):

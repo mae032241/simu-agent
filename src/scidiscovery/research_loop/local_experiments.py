@@ -55,12 +55,6 @@ class LocalExecution:
         self._lease=None
 
     @staticmethod
-    def code_assets():
-        from . import runtime, execution_inputs, history, qualification
-        from scidiscovery.operations import execution
-        return [runtime.__file__, execution.__file__, execution_inputs.__file__, history.__file__, qualification.__file__]
-
-    @staticmethod
     def lifecycle_capabilities():
         return LifecycleCapabilities(lookup_submission=True,query=True,collect=True,atomic_admission=True)
 

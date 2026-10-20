@@ -111,7 +111,7 @@ scid-research artifact --root /absolute/instance --step 3 --index 1 --output ./m
 
 ## 插件选择与实例管理
 
-`prepare --execution-config /path/config.json` 显式选择已注册执行器，配置形状为 `{"executor":"plugin:binding","configuration":{...}}`。仅用于宿主配置的 `--experiment-mode local`；这里 local 表示配置归属，不表示只支持本机计算。不传时沿用默认本地执行器。公开配置不接受控制层 scope、预算、原件身份或凭据；能力和实现身份随实例冻结。
+`prepare --execution-config /path/config.json` 显式选择已注册执行器，配置形状为 `{"executor":"plugin:binding","configuration":{...}}`。仅用于宿主配置的 `--experiment-mode local`；这里 local 表示配置归属，不表示只支持本机计算。不传时沿用默认本地执行器。公开配置不接受控制层 scope、预算、原件身份或凭据；执行器选择、配置和能力合同随实例冻结。框架、插件及工具源码可正常升级，不再按安装包或工具源码哈希拒绝启动、查询、交付或恢复。任务、输入和成果原件、声明权限、预算及原调用身份保持精确校验；升级不重置消费，也不自动重放未知调用。
 
 实例页面复用同一控制状态：
 
@@ -333,8 +333,8 @@ N1a 已增加本地持久 runner：前台控制器退出后，已接受的原生
 `status` 区分 `prepared / running / native_not_submitted / native_outcome_unsealed / seal_present_unverified / unknown`；
 封存存在仍需 `run` 验证。原生成功但封存失败只重试封存；执行身份丢失、失败或缺量仍不自动重放。
 实际模型提交前再查预算；已确证未提交时记录 `native_not_submitted` 和零用量。
-控制层保留该节点及原意图；预算修订或重试不自动删除这些记录。独立工程审查以精确原件和正向源码路径证明确未提交模型时，新安装的兼容 runtime 可显式执行 `native-startup-successor --root INSTANCE --step N --reconciliation REPORT --reconciliation-sha256 SHA256 --original-runtime-root OLD_RUNTIME --native-home ORIGINAL_HOME --authorization-statement STATEMENT`。该入口冻结工程报告及其局限、旧新实现、原权限与最终 A claim，只追加唯一的新上下文 attempt 1；旧失败、unknown 原件、已消费时间和 dispatch 保留。它仅允许同一逻辑最终 A 的首次实际模型提交，不授权新的科学循环或新额度；重复命令只收集同一 attempt，后继未知时不再提交。空日志、空 thread 或操作者文字本身均不构成未提交证明，既有外部未知效果仍阻断恢复。旧安装不原地改写；启用正式审查的旧实例还须逐字节绑定旧审查合同与全部旧实现、核对科学语义不变，只允许本次最终 A 兼容读取，不迁移审查 verdict 或产生新资格。原有交付资格及提交内必要机械审计保持有效。
-已封存最终 A 后，若独立工程原件以正向调用顺序证明确切原交付 intent 尚未首次调用，可在另一个独立安装的 host runtime 使用 `native-startup-collect --root INSTANCE --step N --reconciliation REPORT --reconciliation-sha256 SHA256 --authorization-statement STATEMENT`。它追加精确旧新实现和原操作绑定，只执行已有科学选择的 host 交付与同操作确认，不进入 native 或科学路由。首次实际调用沿用原声明的有限调用时长；原全局消费、失败、unknown 和身份均保留。收集 intent 一旦持久化，重复命令只核对同操作，绝不再次 submit。授权引用校验、当前准入和结果/科学资格校验分开；旧交付/审查合同原件保持不变。
+控制层保留该节点及原意图；预算修订或重试不自动删除这些记录。独立工程审查以精确原件和正向源码路径证明确未提交模型时，新安装的兼容 runtime 可显式执行 `native-startup-successor --root INSTANCE --step N --reconciliation REPORT --reconciliation-sha256 SHA256 --native-home ORIGINAL_HOME --authorization-statement STATEMENT`。该入口冻结工程报告及其局限、原调用归属、原权限与最终 A claim，只追加唯一的新上下文 attempt 1；旧失败、unknown 原件、已消费时间和 dispatch 保留。它仅允许同一逻辑最终 A 的首次实际模型提交，不授权新的科学循环或新额度；重复命令只收集同一 attempt，后继未知时不再提交。空日志、空 thread 或操作者文字本身均不构成未提交证明，既有外部未知效果仍阻断恢复。框架及工具升级不要求保留旧安装；启用正式审查时仍核对原审查合同的科学语义，不迁移审查 verdict 或产生新资格。原有交付资格及提交内必要机械审计保持有效。
+已封存最终 A 后，若独立工程原件以正向调用顺序证明确切原交付 intent 尚未首次调用，可在当前 host runtime 使用 `native-startup-collect --root INSTANCE --step N --reconciliation REPORT --reconciliation-sha256 SHA256 --authorization-statement STATEMENT`。它追加精确工程核对原件和原操作绑定，只执行已有科学选择的 host 交付与同操作确认，不进入 native 或科学路由。首次实际调用沿用原声明的有限调用时长；原全局消费、失败、unknown 和身份均保留。收集 intent 一旦持久化，重复命令只核对同操作，绝不再次 submit。授权引用校验、当前准入和结果/科学资格校验分开；旧交付/审查合同原件保持不变。
 暂停只阻止新节点，恢复时也允许原已接受节点完成和封存。
 科学角色的 `wait` 仍表示停止等待。W 已接受且同一 external execution 明确 running 时，控制在科学封存前保留原 checkpoint 并进入 `waiting`；默认 `run` 自动监控原 call，终态后 reconcile 并在合格的原会话中续接 W 消费原件，再封存。等待不调用模型、不增加 native dispatch 或 `advance_seconds`，但真实执行的 `waiting_seconds` 仍消耗原授权总运行时限；旧 elapsed 口径继续按总经过时间计量。暂停阻止唤醒的新 native turn，允许核对原终态；控制进程同 boot 重启后从原 waiting 恢复，未知提交不重放。续接仍受原预算/有限次数与冻结 launcher/session 能力约束；能力不足保留 checkpoint 并报告 unavailable。
 
@@ -377,13 +377,11 @@ token 记账只累计 provider 已报告的真实消费：`usage.observed_tokens
 ```bash
 scid-research worker-closeout --root /精确原实例 --step N \
   --max-tokens N --max-seconds N --successor \
-  --retained-implementation /精确旧实现留存/manifest.json \
-  --retained-implementation-sha256 旧manifest精确SHA256 \
   --authorization-note '这一次作者后继的范围与预算' \
   --authorization-statement '操作者授权原话'
 ```
 
-须在更改实现前保留旧 permit 声明的每个实现文件的精确字节、SHA256 和 manifest。各 attempt 的已报告消费分别累计；缺失计量保持 unknown，不估算收费。后继入口追加 `host-recovery/author-closeout/NNN-successor.json`，逐项绑定旧 permit、留存旧实现原件、当前新实现以及失败 attempt 1 的原件；不改旧 permit、settings、失败 outcome 或旧 freeze，不跳过旧 SHA 验证。追加授权记录本身不是执行：只有当前已报告累计 token、时间及控制步数满足本次作者授权门槛，才接受唯一 attempt 2；protected FINAL 的共享交付预留为零，旧预算内模式仍保留原预留。接受后重复调用只收集它，不自动重试，也不授权 attempt 3；新 attempt 2 若真实执行或清理仍 unknown，仍须按原身份核对并阻断后继封存和交付；单纯计量覆盖未知只记录 unknown，不估算收费或单独阻断。
+框架或工具升级不要求预先保留旧源码或填写实现 manifest。各 attempt 的已报告消费分别累计；缺失计量保持 unknown，不估算收费。后继入口追加 `host-recovery/author-closeout/NNN-successor.json`，绑定旧 permit 及失败 attempt 1 的任务、调用、用量和进程原件；不改旧 permit、settings、失败 outcome 或科学原件。追加授权记录本身不是执行：只有当前已报告累计 token、时间及控制步数满足本次作者授权门槛，才接受唯一 attempt 2；protected FINAL 的共享交付预留为零，旧预算内模式仍保留原预留。接受后重复调用只收集它，不自动重试，也不授权 attempt 3；新 attempt 2 若真实执行或清理仍 unknown，仍须按原身份核对并阻断后继封存和交付；单纯计量覆盖未知只记录 unknown，不估算收费或单独阻断。
 
 后继额度来自原有累计预算，不重置消费、不自动续额。每个失败 attempt 与新 turn 的已报告消费均计入原有累计账；操作者独立保留的评价额度及当前交付预留不得挪作新 turn。时间上限及已消费时间不因接续增加。新 W 先读当前 attempt 的紧凑机械事实索引，按需取完整科学原件；索引不替作者排名、判定方法多样性或推导审计平台期，科学结论仍由真实 W 编写。原实验、模型及旧 native attempt 只读；当前 attempt、必要 artifacts 与新上下文权限按原隔离启动器保留。这只授权作者完成既有工作，不授权新训练，受管入口仍拒绝 run、compile、submit、query、collect、cancel；同 uid 原生代码仍是信任的软边界，并非任意计算的强隔离保证。
 
@@ -392,15 +390,13 @@ scid-research worker-closeout --root /精确原实例 --step N \
 ```sh
 scid-research worker-output-accept --root /精确原实例 --step N --attempt 2 \
   --pending-sha256 精确最终pendingSHA256 --session /精确原session.jsonl \
-  --retained-implementation /精确旧successor实现留存manifest.json \
-  --retained-implementation-sha256 精确manifestSHA256 \
   --authorization-note '仅接纳这份已完整返回的原文' \
   --authorization-statement '操作者授权原话'
 ```
 
 仅接受原返回码为 0、进程已清理、最终消息先于唯一完成事件且完成后没有新的 turn/item 活动、该消息与 pending 字节一致、终态用量和精确 session 的实时计数完全匹配，并且没有同时越过原作者 wall 上限的 author attempt 2。未知、部分返回、其他 stop、活动写者、错误任务/原件或不合法的 W 结果不能由此变成成功。当前累计账、时间、控制步数和交付预留仍须足够；不增加额度、不抹去历史 unknown、不接受新 unknown，不授权 attempt 3 或任何新训练。
 
-在改变实现前须另存原 successor 所声明全部实现的精确字节。此入口先追加只用于旧/新实现验证的 `NNN-output-upgrade.json`；该记录本身不接纳输出，也不授权封存。当前准入通过后才追加 `NNN-output-acceptance.json`，绑定精确 job、intent、outcome、完整用量/原生流/session、process、pending 和实现升级原件。pending 精确复制为 `science-output.json`，原 pending、outcome、局部上限及 stop marker 全部保留。接纳记录记录已发生的局部超额及限制，封存引用该记录提供的 raw SHA，仍执行原有输入、schema、科学路由、受管实验、材料和来源检查，不改写 W 结论，不宣称科学资格或审计通过。重复操作只能核对同一接纳和既有后继，不创建新作者 turn。
+此入口先追加绑定精确 successor 和操作者授权的 `NNN-output-upgrade.json`；该记录不要求保留旧框架源码，本身不接纳输出，也不授权封存。当前准入通过后才追加 `NNN-output-acceptance.json`，绑定精确 job、intent、outcome、完整用量/原生流/session、process、pending 和授权原件。pending 精确复制为 `science-output.json`，原 pending、outcome、局部上限及 stop marker 全部保留。接纳记录记录已发生的局部超额及限制，封存引用该记录提供的 raw SHA，仍执行原有输入、schema、科学路由、受管实验、材料和来源检查，不改写 W 结论，不宣称科学资格或审计通过。重复操作只能核对同一接纳和既有后继，不创建新作者 turn。
 
 这一例外仅用于原 W 收口并转入 `purpose=closeout` 的 A 审查、审计与交付；不放宽普通 search/correction 的历史直接来源资格，不重新开放探索。同 uid 信任和隔离启动器的软边界不变。实施记录及具体阶段额度保留在本地 ignored 原件中，不作为长期产品默认值。
 

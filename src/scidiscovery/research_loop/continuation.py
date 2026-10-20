@@ -33,7 +33,7 @@ def policy(value, launcher):
         path = Path(argument).absolute()
         if path.is_file():
             original = c.regular(path.resolve())
-            files.append(dict(invoked_path=str(path), path=str(original), sha256=c.digest(original)))
+            files.append(dict(invoked_path=str(path), path=str(original)))
     if not files:raise ValueError('Resume-capable launcher originals must be frozen')
     return dict(value, launcher_files=files)
 
@@ -45,9 +45,9 @@ def validate_launcher(root):
     limits = c.settings(root).get('resume_policy')
     if limits is None:raise ResumeUnavailable('worker_resume_unsupported')
     for proof in limits['launcher_files']:
-        if (Path(proof['invoked_path']).resolve() != Path(proof['path'])
-                or c.digest(c.regular(Path(proof['path']))) != proof['sha256']):
+        if Path(proof['invoked_path']).resolve() != Path(proof['path']):
             raise ValueError('Frozen resume launcher changed')
+        c.regular(Path(proof['path']))
     return limits
 
 

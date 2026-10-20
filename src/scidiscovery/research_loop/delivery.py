@@ -86,7 +86,7 @@ def policy(value):
         path = Path(arg)
         if path.is_file():
             path = path.resolve()
-            launcher_files.append(dict(path=str(_file(path)), invoked_path=str(Path(arg).absolute()), sha256=c.digest(path)))
+            launcher_files.append(dict(path=str(_file(path)), invoked_path=str(Path(arg).absolute())))
     if not launcher_files or not Path(argv[0]).is_absolute():
         raise ValueError('Launcher executable and original files must be frozen')
     if not isinstance(adapter['config'], dict) or not isinstance(adapter['target'], dict):
@@ -105,11 +105,13 @@ def policy(value):
         labels.add(label)
         invoked = Path(item['path']).absolute()
         path = _file(invoked.resolve())
-        frozen_inputs.append(dict(label=label, path=str(path), invoked_path=str(invoked), sha256=c.digest(path), size_bytes=path.stat().st_size))
+        proof=dict(label=label,path=str(path),invoked_path=str(invoked))
+        if label!='runtime-python':proof.update(sha256=c.digest(path),size_bytes=path.stat().st_size)
+        frozen_inputs.append(proof)
     for path in roots:
         if not isinstance(path, str) or not Path(path).is_absolute() or Path(path).resolve() != Path(path):
             raise ValueError('Provider read scopes require exact absolute originals')
-    frozen = dict(adapter=str(script), adapter_sha256=c.digest(script), launcher_argv=list(argv),
+    frozen = dict(adapter=str(script), launcher_argv=list(argv),
                   launcher_files=launcher_files, config=adapter['config'], target=adapter['target'],
                   inputs=frozen_inputs, source_roots=list(roots))
     if 'capabilities' in adapter:frozen['capabilities']=list(adapter['capabilities'])
@@ -135,9 +137,17 @@ def _adapter(root):
     spec = c.settings(root).get('delivery_policy', {}).get('adapter')
     if spec is None:
         raise DeliveryUnresolved('delivery_adapter_unavailable')
-    for proof in [dict(path=spec['adapter'], sha256=spec['adapter_sha256']), *spec['launcher_files'], *spec['inputs']]:
+    for proof in spec['launcher_files']:
+        if 'invoked_path' in proof and Path(proof['invoked_path']).resolve() != Path(proof['path']):
+            raise ValueError('Frozen executable path now names another original')
+        _file(proof['path'])
+    _file(spec['adapter'])
+    for proof in spec['inputs']:
         if 'invoked_path' in proof and Path(proof['invoked_path']).resolve() != Path(proof['path']):
             raise ValueError('Frozen executable or input path now names another original')
+        if proof['label']=='runtime-python':
+            _file(proof['path'])
+            continue
         if c.digest(_file(proof['path'])) != proof['sha256']:
             raise ValueError('Frozen delivery executable or public harness changed')
     from . import generic_delivery
@@ -306,6 +316,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
                 resolved['ledger'] = freeze(_proof(root, resolved['ledger']))
                 resolved['objects'] = {label: freeze(_proof(root, proof)) for label, proof in resolved['objects'].items()}
                 for proof in spec['inputs']:
+                    if proof['label']=='runtime-python':continue
                     if proof['label'] in resolved['objects']:raise ValueError('Provider input collides with candidate original')
                     frozen = freeze(proof['path'])
                     if frozen['sha256'] != proof['sha256']:raise ValueError('Frozen provider input changed before snapshot')
@@ -352,6 +363,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             destination = stage / 'inputs' / label;destination.parent.mkdir(exist_ok=True)
             shutil.copyfile(_proof(root, proof), destination);destination.chmod(0o400)
         for proof in spec['inputs']:
+            if proof['label']=='runtime-python':continue
             destination = stage / 'inputs' / proof['label'];destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(_file(proof['path']), destination);destination.chmod(0o400)
             if c.digest(destination) != proof['sha256']:raise ValueError('Frozen provider input changed during staging')
@@ -367,6 +379,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
     items, seen = list(direct), set()
     static = {}
     for proof in spec['inputs']:
+        if proof['label']=='runtime-python':continue
         frozen = freeze(proof['path'])
         if frozen['sha256'] != proof['sha256']:raise ValueError('Frozen provider input changed before snapshot')
         static[proof['label']] = frozen

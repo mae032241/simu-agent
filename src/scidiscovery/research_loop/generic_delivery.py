@@ -128,8 +128,7 @@ def isolate(request, adapter):
     if target.resolve() != target or not target.is_dir():raise ValueError('Delivery target changed')
     python = Path(request['config']['python'])
     proof = next(item for item in request['inputs'] if item['label'] == 'runtime-python')
-    if (str(python.absolute()) != proof['invoked_path'] or str(python.resolve()) != proof['path']
-            or _sha(python.resolve()) != proof['sha256']):
+    if str(python.absolute()) != proof['invoked_path'] or str(python.resolve()) != proof['path']:
         raise ValueError('Frozen delivery runtime changed')
     bwrap = shutil.which('bwrap')
     if bwrap is None:raise ValueError('Directory delivery requires the qualified namespace launcher')

@@ -10,7 +10,6 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import hmac
-import inspect
 import math
 import os
 from pathlib import Path
@@ -33,29 +32,10 @@ def configuration(value):
     return value
 
 
-def implementation():
-    directory = Path(__file__).resolve().parent
-    paths = [directory / name for name in ('execution_authority.py', 'instance_ui.py', 'instance_render.py',
-        'contracts.py', 'formal_review.py', 'qualification.py', 'execution.py', 'budget.py', 'experiments.py',
-        'runtime.py', 'native.py', 'search.py', 'execution_inputs.py')]
-    paths += [directory / 'instance_control.py']
-    from . import instance_owner
-    paths += [Path(instance_owner.__file__).resolve()]
-    from .execution_resume import capture_pending, verify_pending_set, resume
-    from .execution_recovery import call_view
-    from .history import validate_managed
-    paths += [Path(inspect.getfile(function)).resolve() for function in
-              (capture_pending, verify_pending_set, resume, call_view, validate_managed)]
-    paths += [directory.parent / 'execution_security.py', directory.parent / 'browser_access.py',
-              directory.parent / 'operations/provenance_rules.py', directory.parent / 'operations/runtime_plugins.py',
-              directory.parent / 'plugin_runtime/collection.py']
-    return [q._identity(path) for path in dict.fromkeys(paths)]
-
-
 def freeze_configuration(root):
     root = Path(root).resolve()
     return dict(version=1, contract=q._save(root, root / 'execution-authority/contract.json',
-        dict(version=1, implementation=implementation(), options=list(OPTIONS), scope=SCOPE,
+        dict(version=1, options=list(OPTIONS), scope=SCOPE,
              stage='decision_originals_resource_gate_separate')))
 
 
@@ -64,9 +44,9 @@ def contract(root):
     if policy is None:
         raise ValueError('Execution authority is unavailable for this instance')
     value = q._read(root, policy['contract'])
-    if value != dict(version=1, implementation=implementation(), options=list(OPTIONS), scope=SCOPE,
+    if {key:item for key,item in value.items() if key!='implementation'} != dict(version=1, options=list(OPTIONS), scope=SCOPE,
                      stage='decision_originals_resource_gate_separate'):
-        raise q.IntegrityError('Execution authority implementation or contract changed')
+        raise q.IntegrityError('Execution authority contract changed')
     return policy['contract']
 
 
@@ -357,8 +337,7 @@ def record_decision(root, request_id, *, secret, boot, browser_token, nonce, csr
                 value['kind'], selected_option, value['options'])):
             raise ValueError('A denied policy cannot be overridden by an execution decision')
         body = dict(version=1, kind='human', **semantic, ui_boot=boot,
-                    csrf_hash=security.secret_hash(csrf), decided_at=time.time(),
-                    implementation=implementation())
+                    csrf_hash=security.secret_hash(csrf), decided_at=time.time())
         # An exception option is not a resource grant; P3d must separately amend.
         body['receipt_hmac'] = security.receipt_hmac(secret, security.canonical(body))
         return q._save(root, path, body)
@@ -381,8 +360,7 @@ def record_policy_decision(root, request_id, *, secret, operation_context=None):
             return q._ref(root, path)
         body = dict(version=1, kind='policy', request=ref, nonce_hash=value['nonce_hash'],
                     selected_option=security.execution_approval_option_id('accept'),
-                    actor='configured_policy', rationale='Exact frozen policy admission',
-                    implementation=implementation())
+                    actor='configured_policy', rationale='Exact frozen policy admission')
         body['receipt_hmac'] = security.receipt_hmac(secret, security.canonical(body))
         return q._save(root, path, body)
 
@@ -397,7 +375,6 @@ def decision(root, request_id, *, secret):
     body = {key: item for key, item in document.items() if key != 'receipt_hmac'}
     if (body.get('request') != ref or body.get('nonce_hash') != value['nonce_hash']
             or body.get('kind') not in {'human', 'policy'}
-            or body.get('implementation') != implementation()
             or body.get('selected_option') not in value['options']
             or not hmac.compare_digest(document.get('receipt_hmac', ''),
                     security.receipt_hmac(secret, security.canonical(body)))):
@@ -457,7 +434,7 @@ def _host_context(config):
             or c.settings(root).get('execution_resource_policy') is None):
         raise q.IntegrityError('Trusted execution services have no exact host task')
     selected = c.settings(root)['execution_config']
-    if (config.get('registered_implementation') != selected['implementation']
+    if (config.get('registered_implementation') != selected.get('implementation')
             or config['execution_interface']['executor'] != selected['executor']
             or any(config.get(key) != value for key, value in selected['configuration'].items())):
         raise q.IntegrityError('Trusted execution services differ from operator configuration')

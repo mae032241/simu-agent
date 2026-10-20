@@ -16,12 +16,6 @@ class CovExecution(LocalExecution):
         from . import replay_check
         replay_check.reserve_seconds(config)
 
-    @staticmethod
-    def code_assets():
-        from . import local_experiments, cov_delivery, delivery
-        return [*LocalExecution.code_assets(),cov.__file__,local_experiments.__file__,cov_receipt.__file__,
-            cov_delivery.__file__,delivery.__file__]
-
     def capabilities(self):
         original = tuple(item for item in super().capabilities() if item.key != e.INPUT_SOURCES_KEY)
         command = dict(version=1, invocation='run --script <single source file>',

@@ -1,5 +1,6 @@
 """Small clock/contracts checks; no native process, replay leaf or solver."""
 import json
+from pathlib import Path
 import sys
 
 import pytest
@@ -99,3 +100,37 @@ def test_soft_target_advice_keeps_original_replay_window(tmp_path, monkeypatch, 
         assert bound['time_allocation']['status']=='reserved'
         assert bound['deadline_boottime']==165.
         assert bound['time_allocation']['experiment_deadline_boottime']==153.
+
+
+@pytest.mark.parametrize('expired',[False,True])
+def test_optional_check_upgrade_keeps_original_deadline_and_single_call(tmp_path,monkeypatch,execution_registry,expired):
+    config=e.freeze(configuration(tmp_path),'cov_execution:experiment')
+    adapter=e.load(config)
+    bound=replay_check.acceptance(config,adapter)
+    bound['capability']['sha256']='0'*64  # Historical fingerprints are not current-tool admission.
+    if expired:bound['deadline_boottime']=1.
+    calls=[]
+    def upgraded_check(self,call_id,*,deadline_boottime,on_process):
+        calls.append((call_id,deadline_boottime))
+        return dict(status='sample_replay_ok',cleanup_confirmed=True,note='Synthetic optional check only.')
+    monkeypatch.setattr(cov_experiments.CovExecution,'replay_check',upgraded_check)
+    adapter=e.load(config)
+    assert e._public_capabilities(adapter)==config['execution_interface']['public_capabilities']
+    directory=Path(config['record_dir'])/'calls/original';directory.mkdir(parents=True)
+    accepted=dict(call_id='original',scope=config['scope'],parent=dict(candidate_id=None),engineering_check=bound)
+    e.write(directory/'accepted.json',accepted);e.write(directory/'completed.json',dict(status='known_success'))
+    observation=dict(status='known_success',accepted=e.proof(directory/'accepted.json'),completed=e.proof(directory/'completed.json'))
+    originals={path:path.read_bytes() for path in (directory/'accepted.json',directory/'completed.json')}
+    replay_check.complete(config,adapter,'original',observation)
+    feedback=replay_check.public(config,'original')
+    assert feedback['status']==('not_run' if expired else 'sample_replay_ok')
+    intent=json.loads((directory/replay_check.INTENT).read_text())
+    assert intent['check']['capability']['policy']['max_seconds']==10
+    if not expired:
+        assert len(calls)==1 and calls[0][0]=='original'
+        assert calls[0][1]<=bound['time_allocation']['check_deadline_boottime']
+        assert calls[0][1]-replay_check.time.clock_gettime(replay_check.time.CLOCK_BOOTTIME)<=10
+    else:assert calls==[]
+    replay_check.complete(config,adapter,'original',observation)
+    assert len(calls)==(0 if expired else 1)
+    assert all(path.read_bytes()==raw for path,raw in originals.items())

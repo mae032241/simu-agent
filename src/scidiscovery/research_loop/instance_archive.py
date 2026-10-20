@@ -273,8 +273,6 @@ def _dependencies(settings):
             yield dict(owner=key, reference=value.get('adapter'), coverage='external_adapter_dependencies_not_copied')
     configured = settings.get('execution_config')
     if configured is not None:
-        for proof in configured['implementation']['code']:
-            yield dict(owner='registered_execution_code', reference=proof, coverage='no_separate_external_copy')
         yield dict(owner='registered_plugin_storage', reference=configured['executor'],
                    coverage='unsupported_without_frozen_storage_ownership')
     yield dict(owner='native_sessions', reference='native-homes', coverage='credentials_caches_and_unretained_sessions_excluded')
@@ -689,11 +687,6 @@ def checkpoint_export(root, output):
 
 def _restore_dependencies(settings):
     """Current implementation/config dependencies; historical sessions are optional."""
-    configured = settings.get('execution_config')
-    for proof in (configured or {}).get('implementation', {}).get('code', []):
-        actual = files.hash_file(proof['path'])
-        if any(actual[key] != proof[key] for key in ('sha256','size_bytes')):
-            raise files.ArchiveError('Current execution implementation dependency changed')
     argv = settings['native_launcher_argv']
     if not argv or shutil.which(argv[0]) is None:
         raise files.ArchiveError('Current native launcher is unavailable; no automatic installation')

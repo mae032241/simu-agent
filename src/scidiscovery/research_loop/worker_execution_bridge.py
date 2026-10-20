@@ -144,8 +144,6 @@ def _configuration(server):
     config=experiment_client.resolve(server.config_path,client)
     if client!=server.client or config!=server.configuration:
         raise e.IntegrityError('Original task or attempt changed')
-    if any(e.proof(item['path'])!=item for item in config['execution_interface']['code']):
-        raise e.IntegrityError('Original frozen execution implementation changed')
     return config
 
 

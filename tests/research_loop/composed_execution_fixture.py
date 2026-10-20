@@ -18,7 +18,6 @@ class Remote:
     def capabilities(self):
         schema=dict(type='object',properties=dict(observation=dict(type='string',const='composed-original')),required=['observation'],additionalProperties=False)
         return (AdapterCapability('opaque_input','execution','fixture.composed-input.v1',1,'application/schema+json',e.encoded(schema),dict(input='JSON object matching the public schema')),)
-    def code_assets(self): return [__file__]
     def prepare(self, payload, **kwargs):
         if self.config.get('require_contract'):
             import jsonschema

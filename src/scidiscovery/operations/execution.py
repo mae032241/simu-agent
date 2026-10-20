@@ -89,7 +89,6 @@ class ManagedExecutionInterface(ExecutionAdapter, Protocol):
     query and optional declared collection; query itself does not collect or submit.
     """
     def lifecycle_capabilities(self) -> LifecycleCapabilities: ...
-    def code_assets(self) -> tuple[str, ...]: ...
     def acceptance_metadata(self, payload: LocalFileDescriptor, *, parent=None, new=False, change=None) -> dict: ...
     def dispatch_lease(self, accepted: dict) -> None: ...
     def status_details(self, call_id: str) -> dict: ...
@@ -100,7 +99,7 @@ class ManagedExecutionInterface(ExecutionAdapter, Protocol):
 
 
 MANAGED_METHODS = ('capabilities','prepare','submit','lookup_submission','status','cancel','collect',
-    'code_assets','acceptance_metadata','dispatch_lease','status_details','result','public_result',
+    'acceptance_metadata','dispatch_lease','status_details','result','public_result',
     'collect_original','cancel_original')
 
 

@@ -304,7 +304,7 @@ def test_known_failure_same_thread_success_keeps_originals_and_cumulative_budget
     assert (c.workspace(root,1)/'work/launches').read_text()=='exec\nresume\n'
 
 
-@pytest.mark.parametrize('mutation', ['root_intent', 'process_receipt', 'session_header', 'launcher', 'schema', 'task'])
+@pytest.mark.parametrize('mutation', ['root_intent', 'process_receipt', 'session_header', 'schema', 'task'])
 def test_original_binding_tamper_never_creates_continuation(tmp_path, mutation):
     root=instance(tmp_path);first=fail(root)
     if mutation=='root_intent':
@@ -320,8 +320,6 @@ def test_original_binding_tamper_never_creates_continuation(tmp_path, mutation):
         work=c.workspace(root,1);value=c.read(work/'science-task.json');value['goal_text']='Injected objective';c.write(work/'science-task.json',value)
     elif mutation=='schema':
         c.write(first/'science-result.schema.json',dict(type='object',properties={},required=[],additionalProperties=False))
-    else:
-        launcher=Path(c.settings(root)['native_launcher_argv'][1]);launcher.write_text(launcher.read_text()+'\n# changed\n')
     with pytest.raises(ValueError):controller.worker_resume(root,1)
     assert not (first/'continuations/001/native-intent.json').exists()
     assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
@@ -615,3 +613,11 @@ def test_resume_accepts_only_exact_published_original_schema_shapes(tmp_path,sha
         with pytest.raises(ValueError,match='Original native output schema changed'):continuation.validate_task(root,1)
     assert all(p.read_bytes()==data for p,data in originals.items())
     assert not (execution.origin(root,1)/'native-intent.json').exists()
+
+
+def test_worker_resume_allows_launcher_source_upgrade(tmp_path):
+    root=instance(tmp_path);fail(root)
+    launcher=Path(c.settings(root)['native_launcher_argv'][1])
+    launcher.write_text(launcher.read_text()+'\n# upgraded launcher\n')
+    controller.worker_resume(root,1)
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\nresume\n'

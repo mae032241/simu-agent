@@ -60,12 +60,12 @@ def test_cov_single_source_contract_is_frozen_discoverable_and_exact(wrapper, ca
     assert output.stat().st_size==bound['size_bytes']
     changed = deepcopy(config)
     changed['execution_interface']['public_capabilities'] = []
-    with pytest.raises(e.IntegrityError, match='implementation or configuration changed'):
+    with pytest.raises(e.IntegrityError, match='contract or configuration changed'):
         e.load(changed, path=wrapper.config)
     for field,value in (('sha256','0'*64),('size_bytes',bound['size_bytes']+1)):
         changed=deepcopy(config)
         next(item for item in changed['execution_interface']['public_capabilities'] if item['key']=='cov_single_source')[field]=value
-        with pytest.raises(e.IntegrityError,match='implementation or configuration changed'):
+        with pytest.raises(e.IntegrityError,match='contract or configuration changed'):
             e.load(changed,path=wrapper.config)
     assert wrapper.config.read_bytes()==original_config
 
@@ -73,7 +73,7 @@ def test_cov_single_source_contract_is_frozen_discoverable_and_exact(wrapper, ca
 @pytest.mark.parametrize('registered', [False, True])
 def test_public_contracts_freeze_without_managed_source_key(tmp_path, remote_registry, registered):
     from scidiscovery.research_loop.protocol import CURRENT
-    options = dict(registered_implementation=e.registration_identity('remote_execution:fixture')) if registered else {}
+    options = dict(registered_implementation=dict(factory='previous-installation:factory',plugin_version='old',code=[])) if registered else {}
     config = e.freeze(dict(options, record_dir=str(tmp_path / 'records'),
         scope=dict(handoff_protocol=CURRENT, step=2, role='W', job_sha256='a' * 64,
             execution_key='b' * 64, mechanism_ref=None)), 'remote_execution:fixture', path=tmp_path / 'config.json')
@@ -83,7 +83,7 @@ def test_public_contracts_freeze_without_managed_source_key(tmp_path, remote_reg
     assert contracts == e._public_capabilities(e.load(config, path=tmp_path / 'config.json'))
     changed = deepcopy(config)
     changed['execution_interface']['public_capabilities'][0]['sha256'] = '0' * 64
-    with pytest.raises(e.IntegrityError, match='implementation or configuration changed'):
+    with pytest.raises(e.IntegrityError, match='contract or configuration changed'):
         e.load(changed, path=tmp_path / 'config.json')
 
 
@@ -92,7 +92,7 @@ def test_empty_capability_adapter_preserves_public_contract_presence(tmp_path, r
     from execution_fixtures import DifferentExternalIdentity
     from scidiscovery.research_loop.protocol import CURRENT
     monkeypatch.setattr(DifferentExternalIdentity, 'capabilities', lambda self: ())
-    options = dict(registered_implementation=e.registration_identity('remote_execution:fixture')) if registered else {}
+    options = dict(registered_implementation=dict(factory='previous-installation:factory',plugin_version='old',code=[])) if registered else {}
     config = e.freeze(dict(options, record_dir=str(tmp_path / 'records'),
         scope=dict(handoff_protocol=CURRENT, step=2, role='W', job_sha256='a' * 64,
             execution_key='b' * 64, mechanism_ref=None)), 'remote_execution:fixture', path=tmp_path / 'config.json')

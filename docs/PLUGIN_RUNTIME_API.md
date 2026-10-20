@@ -34,7 +34,10 @@ parallel types. Current plugin protocol is `1`, Operation ABI is `26`, and compo
 protocol versions are declared independently. Compiled identity covers declared
 component/resource metadata; arbitrary handler
 source edits are not automatically included unless their declaration binds that
-identity. Consumers must freeze the actual implementation they execute.
+identity. Thin CLI consumers freeze executor selection, configuration and declared
+execution contracts. Installed framework/plugin/tool source hashes and versions do
+not prevent upgrades; scientific task, input, output and authorization originals
+retain their exact content identities.
 
 `OperationSpec.scientific_progress` optionally declares `ScientificProgressSpec`,
 including the objective/subject/source ports and a projector component reference.

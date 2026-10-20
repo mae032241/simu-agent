@@ -232,7 +232,12 @@ All listed files are in `src/scidiscovery/research_loop/` unless stated otherwis
 | Archive and same-host cold restore | `instance_archive.py`, `instance_owner.py`, shared `archive_io.py` |
 
 `scidiscovery.execution_interfaces` discovers execution implementations; instances freeze
-the exact selected implementation. Retained Operation/compiler declarations and shared
+the selected executor, operator configuration and execution contract. Installed framework,
+plugin and tool source may be upgraded without invalidating a scientific task or its
+accepted calls. Historical source fingerprints are metadata, not admission gates.
+Task/input/artifact originals, declared permissions, finite budgets and exact external
+call identities remain binding; an upgrade never authorizes replay of an unknown call.
+Retained Operation/compiler declarations and shared
 `artifact_agent` schemas/storage primitives and the extracted Operation callbacks are
 independent libraries. The old `artifact_agent/service` Run/SQL host and its runtime
 helpers are deleted; the thin loop does not require that storage library as its host.

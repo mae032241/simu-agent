@@ -72,7 +72,7 @@ def test_cli_selection_is_frozen_before_real_native_host_wiring(tmp_path,monkeyp
     assert prepared.returncode==0,result
     assert result['execution']==dict(executor=executor,capabilities_status='awaiting_host_task_configuration')
     settings=c.settings(root);frozen=settings['execution_config']
-    assert frozen['configuration']==options and frozen['executor']==executor and frozen['implementation']['code']
+    assert frozen['configuration']==options and frozen['executor']==executor
     assert settings['experiment_mode']=='local'  # Ownership, not the backend type.
     assert not list((root/'jobs').glob('*')) and not list((root/'project/nodes').glob('*/work/experiment-config.json'))
     before=c.digest(root/'settings.json');selection.write_text('{}')
@@ -82,8 +82,9 @@ def test_cli_selection_is_frozen_before_real_native_host_wiring(tmp_path,monkeyp
     assert c.digest(root/'settings.json')==before and job['execution_config_sha256']
     assert config['execution_interface']['executor']==executor
     assert config['scope']['job_sha256']==c.digest(root/'jobs/002.json') and config['native_attempt']['number']==0
-    assert config['record_dir']==str(work/'work/lineage') and config['admission']['mode']=='soft'
-    assert config['registered_implementation']==frozen['implementation']
+    from scidiscovery.research_loop import experiment_client
+    assert config['record_dir']==str(experiment_client.record_directory(root,2)) and config['admission']['mode']=='soft'
+    assert config.get('registered_implementation')==frozen.get('implementation')
     assert config['execution_interface']['public_capabilities'][0]['schema_id'].startswith('fixture.')
     assert 'execution_config' not in (work/'science-task.json').read_text()
     seal=c.read(execution.origin(root,2)/'result-identity.json');observed=c.read(root/seal['observations']['path'])
@@ -93,8 +94,9 @@ def test_cli_selection_is_frozen_before_real_native_host_wiring(tmp_path,monkeyp
     assert status['executor']==executor and status['capabilities']['query'] and 'configuration' not in status
     from scidiscovery.research_loop.local_experiments import cleanup
     assert cleanup(root,job)=='not_applicable'
-    frozen_calls={p:p.read_bytes() for p in (work/'work/lineage/calls').rglob('*') if p.is_file()}
-    assert cli('run','--root',root)[1]==result
+    frozen_calls={p:p.read_bytes() for p in e.Records(config).root.rglob('*') if p.is_file()}
+    repeated=cli('run','--root',root)[1]
+    assert {key:value for key,value in repeated.items() if key!='budget'}=={key:value for key,value in result.items() if key!='budget'}
     assert all(p.read_bytes()==raw for p,raw in frozen_calls.items())
     original_registration=e.registration
     def replaced(key):
@@ -102,9 +104,9 @@ def test_cli_selection_is_frozen_before_real_native_host_wiring(tmp_path,monkeyp
         return ExecutionInterfaceRegistration(declared.plugin_id,declared.version+'-replaced',declared.factory),binding
     monkeypatch.setattr(e,'registration',replaced)
     call=e.Records(config).calls()[0].name
-    with pytest.raises(e.IntegrityError,match='implementation.*changed'):
-        e.original_adapter(config,call,'query')
-    with pytest.raises(e.IntegrityError):e.dispatch(config,work/'work/payload.bin')
+    _,adapter=e.original_adapter(config,call,'query')
+    assert adapter.status_details(call)['state']=='succeeded'
+    assert e.dispatch(config,work/'work/payload.bin')['status']=='known_success'
     assert all(p.read_bytes()==raw for p,raw in frozen_calls.items())
 
 
@@ -115,7 +117,7 @@ def forbidden_factory(context):
 def frozen_fixture(tmp_path,executor,options):
     selected=e.operator_configuration(dict(executor=executor,configuration=options))
     path=tmp_path/'experiment-config.json'
-    config=e.freeze(dict(options,registered_implementation=selected['implementation'],
+    config=e.freeze(dict(options,
         admission=dict(version=1,mode='hard'),record_dir=str(tmp_path/'records'),
         scope=dict(handoff_protocol=c.CURRENT,step=2,role='W',job_sha256='a'*64,
             execution_key='b'*64,mechanism_ref=None)),executor,path=path)
@@ -131,6 +133,7 @@ def test_second_registered_implementation_accepts_same_frozen_interface(tmp_path
     result=e.dispatch(config,source)
     assert result['status']=='known_success' and len(e.Records(config).calls())==1
     _,adapter=e.original_adapter(config,result['call_id'],'query')
+    assert not hasattr(adapter,'code_assets')
     assert adapter.status_details(result['call_id'])['state']=='succeeded'
 
 
@@ -153,7 +156,7 @@ def test_prepare_does_not_build_an_adapter_or_fake_task(tmp_path,monkeypatch):
     settings=controller.prepare(tmp_path/'instance',goal,public,['custom'],max_tokens=100,max_seconds=10,max_steps=2,
         model='no-model',reasoning_effort='high',search_policy=None,
         execution_config=dict(executor='fixture:binding',configuration={}))
-    assert settings['execution_config']['implementation']['factory'].endswith(':forbidden_factory')
+    assert settings['execution_config']['executor']=='fixture:binding'
     assert not list((tmp_path/'instance/jobs').glob('*'))
 
 
@@ -206,7 +209,7 @@ def test_duplicate_registration_is_not_cached_or_chosen(monkeypatch,execution_re
 
 
 @pytest.mark.parametrize('change',['modify','add','delete','symlink'])
-def test_registered_package_dependency_change_is_rejected_before_configure(tmp_path,monkeypatch,change):
+def test_registered_package_upgrade_does_not_change_operator_configuration(tmp_path,monkeypatch,change):
     package_name='selection_package_'+change
     package=tmp_path/package_name;package.mkdir();(package/'__init__.py').write_text('')
     (package/'adapter.py').write_text('VERSION=1\n')
@@ -221,10 +224,7 @@ def test_registered_package_dependency_change_is_rejected_before_configure(tmp_p
     elif change=='add':(package/'optional.py').write_text('VERSION=2\n')
     elif change=='delete':helper.unlink()
     else:(package/'optional.py').symlink_to(helper)
-    with pytest.raises(e.IntegrityError):
-        e.validate_operator_configuration(frozen)
-    with pytest.raises(e.IntegrityError):
-        e._validate_registered_implementation(frozen['implementation'],'fixture:binding')
+    assert e.validate_operator_configuration(frozen)==frozen
 
 
 @pytest.mark.parametrize('executor,configuration',[
@@ -268,7 +268,7 @@ def test_default_local_cli_keeps_workspace_cwd_for_single_script(tmp_path,execut
 
 
 @pytest.mark.process_e2e
-def test_accepted_package_dependency_change_blocks_query_reconcile_and_submit(tmp_path,monkeypatch):
+def test_accepted_package_upgrade_allows_query_reconcile_and_submit(tmp_path,monkeypatch):
     from test_history_handoff import finish
     from scidiscovery.research_loop import profiles
     package=tmp_path/'accepted_package';package.mkdir();(package/'__init__.py').write_text('')
@@ -299,7 +299,22 @@ def test_accepted_package_dependency_change_blocks_query_reconcile_and_submit(tm
         args=['--script',str(script)] if action=='run' else ['--call-id',result['call_id']]
         reply=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(path),action,*args],
             env=env,capture_output=True,text=True,timeout=10)
-        assert reply.returncode in (2,3),(reply.stdout,reply.stderr)
-        assert json.loads(reply.stdout)['status'] in {'integrity_error','unavailable'}
+        assert reply.returncode==0,(reply.stdout,reply.stderr)
     assert all(p.read_bytes()==raw for p,raw in originals.items())
-    assert len(e.Records(config).calls())==1
+    assert len(e.Records(config).calls())==2
+
+
+@pytest.mark.parametrize('changed',['task','configuration','permission'])
+def test_source_metadata_upgrade_keeps_task_configuration_and_permission_checks(tmp_path,execution_registry,changed):
+    import copy
+    _,config=frozen_fixture(tmp_path,'local_execution:command',dict(run_argv=[sys.executable]))
+    # Existing accepted configurations may retain proofs for a removed installation.
+    config['execution_interface']['code']=[dict(path=str(tmp_path/'retired-tool.py'),sha256='0'*64,size_bytes=1)]
+    config['execution_interface']['plugin_version']='previous-installed-version'
+    assert e.load(config) is not None
+    altered=copy.deepcopy(config)
+    if changed=='task':altered['scope']['job_sha256']='f'*64
+    elif changed=='configuration':altered['run_argv']=[sys.executable,'-I']
+    else:altered['execution_interface']['capabilities']['query']=False
+    with pytest.raises(e.IntegrityError,match='contract or configuration'):
+        e.load(altered)

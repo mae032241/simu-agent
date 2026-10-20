@@ -1575,7 +1575,7 @@ def closeout(root, *, export_only=False):
 
 
 def worker_closeout(root: Path, step: int, *, max_tokens, max_seconds, authorization_note,
-                    successor=False, retained_implementation=None, retained_implementation_sha256=None, authorization_statement=None):
+                    successor=False, authorization_statement=None):
     """One explicit author-only continuation, followed by the existing A closeout."""
     from . import author_closeout
     root=Path(root).resolve()
@@ -1584,13 +1584,10 @@ def worker_closeout(root: Path, step: int, *, max_tokens, max_seconds, authoriza
         if type(step) is not int or not 0<step<=budget.historical_step_limit(root):
             raise ValueError('Exact original W step required')
         if successor:
-            if retained_implementation is None or not retained_implementation_sha256:
-                raise ValueError('Author successor requires the exact retained implementation manifest and digest')
             author_closeout.start_successor(root,step,max_tokens=max_tokens,max_seconds=max_seconds,
-                authorization_note=authorization_note,authorization_statement=authorization_statement,
-                retained_implementation=retained_implementation,retained_implementation_sha256=retained_implementation_sha256)
+                authorization_note=authorization_note,authorization_statement=authorization_statement)
             return _start_closeout(root,step,step+1,'operator_author_closeout_successor')
-        if any(value is not None for value in (retained_implementation,retained_implementation_sha256,authorization_statement)):
+        if authorization_statement is not None:
             raise ValueError('Successor authorization fields require explicit --successor')
         paths=execution.records(root,step)
         if len(paths)>1:
@@ -1603,14 +1600,13 @@ def worker_closeout(root: Path, step: int, *, max_tokens, max_seconds, authoriza
 
 
 def worker_output_accept(root: Path, step: int, *, attempt, pending_sha256, session,
-                         retained_implementation, retained_implementation_sha256, authorization_note, authorization_statement):
+                         authorization_note, authorization_statement):
     """Explicitly accept one already returned author output; no native retry."""
     from .protocol import require_current
     from . import author_closeout
     root=Path(root).resolve();require_current(root)
     with _writer(root),_inactive_on_error(root,'completed_author_output_acceptance_failed'):
         author_closeout.accept_completed_output(root,step,attempt=attempt,pending_sha256=pending_sha256,session=session,
-            retained_implementation=retained_implementation,retained_implementation_sha256=retained_implementation_sha256,
             authorization_note=authorization_note,authorization_statement=authorization_statement)
         return _start_closeout(root,step,step+1,'operator_completed_author_output_acceptance')
 

@@ -89,6 +89,79 @@ def test_final_results_follow_exact_sealed_terminal_route(tmp_path):
     assert '最终结论已返回' in overview and '查看最终结果' in overview
 
 
+@pytest.mark.parametrize('active', [False, True])
+@pytest.mark.parametrize('log_present', [False, True])
+def test_progress_distinguishes_unconfirmed_runner_from_active_empty_log(tmp_path, active, log_present):
+    import json
+    import os
+    from scidiscovery.research_loop import contracts as c, execution, runtime
+    root, key = prepare(tmp_path, enabled=False)
+    c.build_job(root, 1, 'H', [])
+    record = execution.origin(root, 1); record.mkdir(parents=True, exist_ok=True)
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/001.json'), prepared_at=1.0))
+    runner = runtime.process_identity(os.getpid(), c.digest(root / 'jobs/001.json'))
+    if not active:
+        runner['pid'] = 0  # No Linux /proc/0 identity can match this stopped runner.
+    c.write(record / 'runner-process.json', runner)
+    if log_present:
+        (record / 'native.jsonl').write_bytes(b'')
+    originals = {path: path.read_bytes() for path in (root / 'jobs/001.json',
+        record / 'native-intent.json', record / 'runner-process.json')}
+    ui, cookie = session(root, key)
+    value = json.loads(ui.get('/nodes/1/events?attempt=0', host=ui.host, cookie=cookie)[1])
+    page = ui.get('/nodes/1/progress?attempt=0', host=ui.host, cookie=cookie)[1].decode()
+    assert value['state'] == ('running' if active else 'unknown')
+    assert value['stream_state'] == ('ready' if log_present else 'missing')
+    assert value['events'] == [] and value['progress_label'] in page
+    if active:
+        assert '正在运行' in value['progress_label']
+        assert ('等待助手输出' in value['progress_label']) is (not log_present)
+    else:
+        assert '运行状态未确认' in value['progress_label'] and '核对原任务' in value['progress_label']
+        assert '等待助手输出' not in page and '开始运行后会在这里更新' not in page
+        hero = ui._dashboard_parts(ui._browser(cookie), ui._snapshot())['live-hero']
+        assert 'action="/control/start"' not in hero
+    assert {path: path.read_bytes() for path in originals} == originals
+    assert not (record / 'native-outcome.json').exists()
+    assert not (record / 'result-identity.json').exists()
+
+
+@pytest.mark.parametrize('malformed', ['native-intent.json', 'usage.json'])
+def test_progress_unavailable_observation_never_claims_prepared_or_running(tmp_path, malformed):
+    import json
+    import os
+    from scidiscovery.research_loop import contracts as c, execution, runtime
+    root, key = prepare(tmp_path, enabled=False)
+    c.build_job(root, 1, 'H', [])
+    record = execution.origin(root, 1)
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/001.json'), prepared_at=1.0))
+    c.write(record / 'runner-process.json', runtime.process_identity(os.getpid(), c.digest(root / 'jobs/001.json')))
+    ui, cookie = session(root, key)
+    (record / malformed).write_bytes(b'{')
+    value = json.loads(ui.get('/nodes/1/events?attempt=0', host=ui.host, cookie=cookie)[1])
+    assert value['state'] == ('unstarted' if malformed == 'native-intent.json' else 'running')
+    assert value['observation_state'] == 'unavailable' and value['stream_state'] == 'missing'
+    assert '运行状态暂不可确认' in value['progress_label'] and '核对原任务' in value['progress_label']
+    page = ui.get('/nodes/1/progress?attempt=0', host=ui.host, cookie=cookie)[1].decode()
+    assert value['progress_label'] in page
+    assert all(text not in value['progress_label'] for text in ('尚未开始', '正在运行', '等待助手输出'))
+    assert (record / malformed).read_bytes() == b'{'
+
+
+def test_dashboard_shows_controller_stop_receipt_without_private_reason(tmp_path):
+    from scidiscovery.research_loop import contracts as c
+    root, key = prepare(tmp_path, enabled=False)
+    operation_id = 'd' * 32
+    c.write(root / 'host-control/operations' / (operation_id + '.json'), dict(
+        operation_id=operation_id, kind='controller', sequence=1, status='applied',
+        result=dict(status='native_stopped', reason='private-stderr-path-and-token')))
+    ui, cookie = session(root, key)
+    page = ui.get('/', host=ui.host, cookie=cookie)[1].decode()
+    assert '本次控制请求已停止推进：原生工作尚未封存阶段结论' in page
+    assert '请核对原任务，勿重复提交' in page
+    assert '本次控制请求已处理。' not in page and 'private-stderr-path-and-token' not in page
+
+
 def test_continue_delegates_to_detached_owner_and_pause_remains_immediate(tmp_path, monkeypatch):
     root, key = prepare(tmp_path, enabled=False)
     ui, cookie = session(root, key)
@@ -355,7 +428,7 @@ def test_headless_browser_executes_public_progress_poll(tmp_path, monkeypatch):
     import subprocess
     import tempfile
     import time
-    from scidiscovery.research_loop import instance_ui, contracts as c, execution
+    from scidiscovery.research_loop import instance_ui, contracts as c, execution, runtime
     chrome = shutil.which('google-chrome') or shutil.which('chromium')
     node = shutil.which('node')
     if not chrome or not node:
@@ -405,6 +478,19 @@ network = false
                 elif stage == '3':
                     _, _, output = finish(root, 3, 'H', [2], action='analyze', summary='Third browser phase conclusion')
                     (output / 'native.jsonl').write_text(json.dumps(dict(type='item.completed', item=dict(type='agent_message', text='Third phase public output'))) + '\n')
+                elif stage == '4':
+                    c.build_job(root, 4, 'W', [3])
+                    output = execution.origin(root, 4)
+                    c.write(output / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/004.json'), prepared_at=1.0))
+                    c.write(output / 'runner-process.json', runtime.process_identity(os.getpid(), c.digest(root / 'jobs/004.json')))
+                elif stage == 'stopped':
+                    output = execution.origin(root, 4)
+                    runner = c.read(output / 'runner-process.json'); runner['pid'] = 0
+                    c.write(output / 'runner-process.json', runner)
+                    operation_id = 'd' * 32
+                    c.write(root / 'host-control/operations' / (operation_id + '.json'), dict(
+                        operation_id=operation_id, kind='controller', sequence=1, status='applied',
+                        result=dict(status='native_stopped', last_step=3, reason='Private fixture diagnostic')))
         return original_snapshot(selected, **options)
     monkeypatch.setattr(InstanceUI, '_snapshot', fixture_snapshot)
     monkeypatch.setattr(control, 'start_background', detached)
@@ -568,6 +654,7 @@ for (let index = 0; index < 60; index++) {
   if (observed.includes('已连接')) break;
 }
 if (!observed.includes('已连接')) throw new Error('Public progress JavaScript did not poll: ' + observed);
+if (!observed.includes('阶段已准备，尚未开始')) throw new Error('Prepared phase lifecycle missing: ' + observed);
 await appendFile(transport, JSON.stringify({type: 'item.completed', item: {type: 'agent_message', text: 'Public browser fixture'}}) + '\n');
 let rendered = '';
 for (let index = 0; index < 60; index++) {
@@ -585,6 +672,7 @@ if ((await evaluate('location.pathname')) !== '/instances/1/progress') throw new
 await screenshot('live-follow-current-node');
 await call('Page.navigate', {url:origin+'/instances/1/nodes/1/progress?attempt=0'});
 await waitFor(`document.querySelector('[data-events]')?.textContent.includes('Public browser fixture')`);
+await waitFor(`document.querySelector('[data-stream-status]')?.textContent.includes('已有阶段结论')`);
 if ((await evaluate(`document.querySelector('[data-events]').textContent`)).includes('Second phase public output')) throw new Error('Historical output followed a newer node');
 await call('Page.navigate', {url:origin+'/instances/1/'});
 await waitFor(`document.getElementById('live-hero')?.innerText.includes('第 2 阶段') && document.querySelector('[data-live-url]')?.dataset.state==='connected'`);
@@ -596,6 +684,16 @@ await screenshot('live-dashboard-draft-preserved');
 await call('Page.navigate', {url:origin+'/'});
 await waitFor(`document.getElementById('live-instances')?.innerText.includes('第 3 阶段') && document.getElementById('live-instances')?.innerText.includes('30 / 1234 tokens')`);
 await screenshot('live-workbench-loaded-status');
+await call('Page.navigate', {url:origin+'/instances/1/progress'});
+await writeFile(process.env.SCID_TEST_ADVANCE, '4');
+await waitFor(`document.querySelector('[data-progress-heading]')?.textContent.includes('第 4 阶段') && document.querySelector('[data-stream-status]')?.textContent.includes('正在运行；等待助手输出')`);
+await writeFile(process.env.SCID_TEST_ADVANCE, 'stopped');
+await waitFor(`document.querySelector('[data-stream-status]')?.textContent.includes('运行状态未确认')`);
+if ((await evaluate(`document.querySelector('[data-stream-status]').textContent`)).includes('等待助手输出')) throw new Error('Stopped runner still claims to wait for output');
+await screenshot('live-progress-stopped-unconfirmed');
+await call('Page.navigate', {url:origin+'/instances/1/'});
+await waitFor(`document.getElementById('live-hero')?.innerText.includes('本次控制请求已停止推进') && document.getElementById('live-hero')?.innerText.includes('原任务状态待核对')`);
+if ((await evaluate('document.body.innerText')).includes('Private fixture diagnostic')) throw new Error('Private stop diagnostic was rendered');
 ws.close();
 if (rendered.includes('{\"type\"')) throw new Error('Raw JSON appeared in the normal progress panel');
 if (!rendered.includes('Public browser fixture')) throw new Error('Public event did not render after append: ' + rendered);

@@ -52,15 +52,13 @@ def observer_config(value):
     if path.resolve() != path:
         raise ValueError('Observer requires an original configuration')
     c.regular(path)
-    result = dict(adapter=str(path), adapter_sha256=c.digest(path), config=value['config'],
+    result = dict(adapter=str(path), config=value['config'],
                   **(dict(contract_version=2) if value.get('contract_version') == 2 else {}))
     if 'source_contract' in value:
-        from . import execution_inputs, qualification, formal_review
+        from . import execution_inputs
         if value['source_contract'] != execution_inputs.SOURCE_CONTRACT:
             raise ValueError('Observer source contract must explicitly cover all declared inputs and contributors')
-        result['source_contract'] = dict(contract=execution_inputs.source_contract(),
-            implementation=[qualification._identity(Path(module.__file__).resolve())
-                for module in (execution_inputs, qualification, formal_review, sys.modules[__name__])])
+        result['source_contract'] = dict(contract=execution_inputs.source_contract())
     return result
 
 
@@ -76,10 +74,6 @@ def observer_input_sources(root, job, observation):
     contract = config['source_contract']
     if contract['contract'] != execution_inputs.source_contract():
         raise q.IntegrityError('Observer source contract changed')
-    if c.digest(c.regular(Path(config['adapter']))) != config['adapter_sha256']:
-        raise q.IntegrityError('Observer source implementation changed')
-    for identity in contract['implementation']:
-        q._check(identity)
     if original is None:
         return None  # Optional adapter failure remains unknown, never implicit empty.
     raw = Path(c._execution_raw(root, job['step']))
@@ -162,8 +156,6 @@ def _proof(root, source, *, context=None):
 def read_adapter(config, request):
     """The trusted synchronous observation transport carries complete records."""
     adapter = c.regular(Path(config['adapter']))
-    if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
-        raise ObserverIntegrityError('Frozen observer adapter changed')
     with tempfile.TemporaryFile(mode='w+') as request_file, tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         json.dump(request,request_file,ensure_ascii=False,allow_nan=False)
         request_file.seek(0)
@@ -519,8 +511,6 @@ def _capture(root, job, payload, materials):
             c.write(path,snapshot)
         return dict(path=path.relative_to(root).as_posix(),sha256=c.digest(path))
     adapter = c.regular(Path(config['adapter']))
-    if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
-        raise ObserverIntegrityError('Frozen observer adapter changed')
     raw = execution.raw(root, job['step'])
     source_sha = c.digest(c.regular(raw))
     path = root / 'host-history/observations' / f'{job["step"]:03d}.json'
@@ -648,8 +638,6 @@ def capture(root, job, payload, materials):
     if config is None:
         return _capture(root,job,payload,materials) if _managed_config(job,root) else None
     adapter = c.regular(Path(config['adapter']))
-    if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
-        raise ObserverIntegrityError('Frozen observer adapter changed')
     path = root / 'host-history/observations' / f'{job["step"]:03d}.json'
     if path.exists():
         return _capture(root, job, payload, materials)  # Never repair an uncertain snapshot.
@@ -1059,7 +1047,7 @@ def refresh(root, before_step):
 
 
 def _observer_binding(source_sha, config):
-    return dict(source_sha256=source_sha,adapter_sha256=config['adapter_sha256'],
+    return dict(source_sha256=source_sha,adapter_sha256=config.get('adapter_sha256'),
                 **(dict(contract_version=2) if config.get('contract_version') == 2 else {}),
                 **(dict(source_contract_sha256=hashlib.sha256(_bytes(config['source_contract'])).hexdigest())
                    if config.get('source_contract') is not None else {}))

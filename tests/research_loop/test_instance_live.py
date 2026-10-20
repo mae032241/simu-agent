@@ -85,7 +85,7 @@ def test_workspace_loaded_state_and_mounted_stream(tmp_path):
             origin='http://' + url.netloc, fields=fields)
         assert status == 303
         status, _, headers = request(connection, 'GET', headers['Location'], cookie=cookie)
-        assert status == 303
+        assert status == 200
         child_cookie = headers['Set-Cookie'].split(';', 1)[0]
         assert request(connection, 'GET', '/instances/1/live', cookie=cookie)[0] == 403
         assert request(connection, 'GET', '/live', cookie=child_cookie)[0] == 403

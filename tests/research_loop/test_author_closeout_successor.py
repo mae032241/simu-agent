@@ -1,6 +1,6 @@
 """Real successor through W seal; shared A/delivery is covered by first-author E2E.
 
-Keep exact old code, immutable failures and no new science calls. Negative cases
+Keep immutable failures and no new science calls across tool upgrades. Negative cases
 retain the public controller entry; success exercises the real successor helper.
 """
 import json
@@ -14,19 +14,6 @@ from execution_fixtures import execution_registry
 from scidiscovery.research_loop import author_closeout as author,budget,contracts as c,controller,execution,native
 from scidiscovery.research_loop.experiment_client import record_directory
 from test_author_closeout_e2e import FAKE,scene
-
-
-def retain(root,permit_path):
-    permit=c.read(permit_path);directory=permit_path.parent/f'{permit["step"]:03d}-retained-implementation'
-    directory.mkdir();rows=[]
-    for number,item in enumerate(permit['implementation']):
-        source=Path(item['path']);target=directory/f'{number:02d}-{source.name}'
-        target.write_bytes(source.read_bytes());target.chmod(0o400)
-        rows.append(dict(original_path=item['path'],sha256=item['sha256'],retained=author._ref(root,target)))
-    path=directory/'manifest.json'
-    c.write(path,dict(version=1,original_permit={key:author._ref(root,permit_path)[key] for key in ('path','sha256')},files=rows))
-    path.chmod(0o400)
-    return path
 
 
 @pytest.fixture
@@ -47,7 +34,6 @@ def pure_upgrade(tmp_path):
         original_usage=author._ref(root,origin/'usage.json'),original_experiment_config=author._ref(root,origin/'experiment-config.json'),
         calls=author._calls(root,1),implementation=[dict(path=str(code),sha256=c.digest(code))])
     permit=root/'host-recovery/author-closeout/001.json';c.write(permit,old)
-    archive=retain(root,permit)
     first=origin/'continuations/001'
     c.write(first/'native-intent.json',dict(attempt=1,continuation_kind='author_closeout',context_mode='new_context',
         root_intent_sha256=old['original_intent']['sha256'],author_closeout=author._ref(root,permit),task_sha256=old['job']['sha256'],
@@ -60,11 +46,10 @@ def pure_upgrade(tmp_path):
     code.write_text('new implementation')
     value=dict(version=1,scope='author_closeout_successor_only',context='new_context',step=1,source_attempt=1,attempt=2,
         max_tokens=300,max_seconds=20,authorization_note='Exactly one successor.',authorization_statement='Finish the same task.',
-        original_permit=author._ref(root,permit),retained_implementation=author._ref(root,archive),
-        implementation=author._implementation_refs(c.settings(root)),
+        original_permit=author._ref(root,permit),
         source_originals={name:author._ref(root,first/name) for name in
             ('native-intent.json','native-outcome.json','usage.json','usage-observation.json','native.jsonl','runner-process.json','native-process.json')})
-    return root,old,value,code,archive
+    return root,old,value,code,None
 
 
 def test_exact_retained_upgrade_verifies_old_and_new_bytes_without_budget_sampling(pure_upgrade,monkeypatch):
@@ -76,18 +61,11 @@ def test_exact_retained_upgrade_verifies_old_and_new_bytes_without_budget_sampli
     assert author.validate(root,old)==old
 
 
-@pytest.mark.parametrize('tamper',['retained_bytes','manifest','current_code','old_permit','source_outcome','missing_old_entry','next_attempt','runner_process','native_process','rebound_process','process_boot','source_context','source_root_intent','source_step'])
+@pytest.mark.parametrize('tamper',['old_permit','source_outcome','next_attempt','runner_process','native_process','rebound_process','process_boot','source_context','source_root_intent','source_step'])
 def test_author_successor_rejects_tampered_old_new_or_source_identity(pure_upgrade,tamper):
     root,old,value,code,archive=pure_upgrade
-    if tamper=='retained_bytes':
-        path=root/c.read(archive)['files'][0]['retained']['path'];path.chmod(0o600);path.write_text('wrong old bytes')
-    elif tamper=='manifest':archive.chmod(0o600);c.write(archive,dict(version=1,files=[]))
-    elif tamper=='current_code':code.write_text('unapproved new implementation')
-    elif tamper=='old_permit':c.write(root/value['original_permit']['path'],dict(old,step=2))
+    if tamper=='old_permit':c.write(root/value['original_permit']['path'],dict(old,step=2))
     elif tamper=='source_outcome':c.write(root/value['source_originals']['native-outcome.json']['path'],dict(returncode=0))
-    elif tamper=='missing_old_entry':
-        changed=c.read(archive);changed['files']=[];archive.chmod(0o600);c.write(archive,changed)
-        value['retained_implementation']=author._ref(root,archive)
     elif tamper in {'source_context','source_root_intent'}:
         path=root/value['source_originals']['native-intent.json']['path'];changed=c.read(path)
         changed['context_mode' if tamper=='source_context' else 'root_intent_sha256']='unapproved'
@@ -167,14 +145,13 @@ def test_stopped_first_author_reserves_unknown_then_one_successor_seals_w_or_blo
     assert outcome['cleanup']=='observed_group_cleaned' and native.usage(root)['unknown_steps']==[2]
     assert native.usage(root)['blocking_unknown_steps']==[]
     assert not (first/'science-output.json').exists() and not (root/'jobs/003.json').exists()
-    old_permit=root/'host-recovery/author-closeout/002.json';manifest=retain(root,old_permit)
-    successor_diagnostic('retained implementation')
+    old_permit=root/'host-recovery/author-closeout/002.json'
     assert native.usage(root)['reserved_tokens']==0 and native.usage(root)['blocking_unknown_steps']==[]
     originals={p:p.read_bytes() for basepath in (origin,calls) for p in basepath.rglob('*')
         if p.is_file() and (p.is_relative_to(first) or p.parent==origin or p.is_relative_to(calls))}
     settings=(root/'settings.json').read_bytes();permit_bytes=old_permit.read_bytes()
     kwargs=dict(max_tokens=5 if mode=='over' else 1000,max_seconds=3 if mode=='wall' else 20,authorization_note='One explicit second author, never a retry loop.',
-        successor=True,retained_implementation=manifest,retained_implementation_sha256=c.digest(manifest),authorization_statement='Finish this same task once, without new training.')
+        successor=True,authorization_statement='Finish this same task once, without new training.')
     if mode=='funds':
         reserve=budget.delivery_reserve(c.settings(root));before=native.usage(root)
         budget.amend(root,max_tokens=before['accounted_tokens'],
@@ -268,3 +245,11 @@ def test_stopped_first_author_reserves_unknown_then_one_successor_seals_w_or_blo
     assert len(execution.records(root,2))==3 and not (origin/'continuations/003').exists()
     assert all(p.read_bytes()==raw for p,raw in originals.items())
     assert old_permit.read_bytes()==permit_bytes and (root/'settings.json').read_bytes()==settings
+
+
+def test_author_successor_allows_installed_tool_upgrade(pure_upgrade):
+    root,old,value,code,_=pure_upgrade
+    code.write_text('upgraded author runtime')
+    assert author.validate_successor(root,value)==value
+    c.write(author.successor_path(root,1),value)
+    assert author.validate(root,old)==old

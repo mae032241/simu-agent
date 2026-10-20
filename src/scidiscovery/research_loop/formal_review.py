@@ -34,14 +34,11 @@ def configuration(value):
 
 
 def _contract():
-    files = [Path(__file__), Path(c.__file__), Path(review_rules.__file__), Path(c.__file__).with_name('native.py'),
-             Path(c.__file__).with_name('continuation.py'), Path(c.__file__).with_name('backends.py')]
     return dict(version=1, instruction=review_rules.REVIEW_INSTRUCTION+' '+REVIEW_EVIDENCE_GUIDANCE,
         scope='Review only the exact supplied material and scientific question. Do not edit the subject. '
               'Use revise, blocked or inconclusive for unsupported claims. Review grants no execution permission.',
         schema=schema(), authors_contract='native_participants_and_selected_implementations_v1',
-        default_inputs='exact_subject_and_global_objective_constraints_v1',
-        implementation=[q._identity(path.resolve()) for path in files])
+        default_inputs='exact_subject_and_global_objective_constraints_v1')
 
 
 def freeze_contract(root):
@@ -54,7 +51,9 @@ def contract(root):
     if policy is None:
         return None
     current = _contract()
-    if q._read(root, policy['contract']) != current:
+    original=q._read(root, policy['contract'])
+    if ({key:value for key,value in original.items() if key!='implementation'} !=
+            {key:value for key,value in current.items() if key!='implementation'}):
         from . import startup_recovery
         if not startup_recovery.review_contract(root,policy,current):
             raise q.IntegrityError('Current formal review contract differs from its frozen original')

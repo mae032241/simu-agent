@@ -3,7 +3,6 @@
 This is host engineering evidence, not scientific qualification or a retry policy.
 Original native receipts, missing meters and consumed budgets are never rewritten.
 """
-import ast
 from contextlib import contextmanager
 from contextvars import ContextVar
 import json
@@ -14,12 +13,8 @@ import shutil
 
 from . import contracts as c, profiles
 
-FILES = ('startup_recovery.py','execution.py','budget.py','native.py','runtime.py',
-         'controller.py','contracts.py','profiles.py','continuation.py','cli.py','formal_review.py')
-ORIGINAL_FILES = tuple(name for name in FILES if name != 'startup_recovery.py')
 _review_preflight = ContextVar('native_startup_review_preflight',default=None)
 _collection_preflight = ContextVar('native_startup_collection_preflight',default=None)
-COLLECTION_FILES = FILES + ('delivery.py',)
 
 
 def path(root, step):
@@ -36,10 +31,6 @@ def _check(ref):
     if file.resolve() != file or file.stat().st_size != ref['size_bytes'] or c.digest(file) != ref['sha256']:
         raise ValueError('Native startup recovery original or implementation changed')
     return file
-
-
-def _implementation(directory, names):
-    return [_ref(Path(directory)/name) for name in names]
 
 
 def _origin(root, step):
@@ -60,7 +51,20 @@ def _originals(root, step):
     return {name:_ref(file) for name,file in _original_paths(root,step).items()}
 
 
+def _native_attribution(report):
+    """Retained evidence about the original source flow, not the current tool."""
+    value=report.get('native_implementation_attribution')
+    if (not isinstance(value,dict) or not isinstance(value.get('postcall_sha256'),str)
+            or len(value['postcall_sha256'])!=64
+            or any(char not in '0123456789abcdef' for char in value['postcall_sha256'])
+            or not isinstance(value.get('limitations'),list) or not value['limitations']
+            or any(not isinstance(item,str) or not item.strip() for item in value['limitations'])):
+        raise ValueError('Original native source attribution and its limitations are required')
+    return value
+
+
 def _evidence(root, step, report, originals, *, initial=False):
+    _native_attribution(report)
     settings,job = c.read(Path(originals['settings']['path'])),c.read(Path(originals['job']['path']))
     subject = report.get('subject') or {}
     judgment = report.get('engineering_judgment') or {}
@@ -130,6 +134,8 @@ def validate(root, step, value=None):
             raise ValueError('Startup successor original declaration changed')
         if name in {'settings','job','intent','schema','assignment'}:_check(ref)
     report = c.read(_check(value['reconciliation']))
+    if value['native_program'].get('sha256')!=_native_attribution(report)['postcall_sha256']:
+        raise ValueError('Native source attribution differs from its accepted engineering evidence')
     intent = c.read(Path(originals['intent']['path']))
     marker = (intent.get('budget_slice') or {}).get('final_return')
     if (not isinstance(marker,dict) or set(marker) != {'seq','sha256'} or type(marker['seq']) is not int
@@ -146,13 +152,6 @@ def validate(root, step, value=None):
     profiles.validate_intent(c.read(Path(originals['settings']['path'])),job,intent)
     if value.get('final_return') != marker:
         raise ValueError('Startup successor changed its original final claim')
-    for ref in value['original_implementation']:_check(ref)
-    if value['original_implementation'] != _implementation(Path(value['original_package']),ORIGINAL_FILES):
-        raise ValueError('Original installed runtime fingerprint changed')
-    if value['native_program']['sha256'] != report.get('native_implementation_attribution',{}).get('postcall_sha256'):
-        raise ValueError('Native program no longer matches the accepted engineering attribution')
-    if value['implementation'] != _implementation(Path(__file__).parent,FILES):
-        _collection_binding(root,value)
     if value['native_profile'] != profiles.for_job(c.read(Path(originals['settings']['path'])),c.read(Path(originals['job']['path']))):
         raise ValueError('Startup successor changed the frozen A profile')
     _review_binding(root,value)
@@ -190,7 +189,6 @@ def require_eligibility(root, step, value=None, *, initial=False):
 def _review_binding(root, value, current=None):
     """Exact historical review semantics; no verdict or new review is granted."""
     from . import formal_review
-    from ..operations import review_rules
     policy = c.read(Path(value['originals']['settings']['path'])).get('formal_review_policy')
     if policy is None:
         if value.get('review_contract') is not None:raise ValueError('Startup recovery invented a review contract')
@@ -202,20 +200,6 @@ def _review_binding(root, value, current=None):
     current = formal_review._contract() if current is None else current
     if {key:item for key,item in frozen.items() if key!='implementation'} != {key:item for key,item in current.items() if key!='implementation'}:
         raise ValueError('Startup recovery cannot change scientific review semantics')
-    old = Path(value['original_package'])
-    originals = [_ref(old/'formal_review.py'),_ref(old/'contracts.py'),
-        _ref(old.parent/'operations/review_rules.py'),_ref(old/'native.py'),_ref(old/'continuation.py')]
-    if frozen['implementation'] != originals:
-        raise ValueError('Frozen review implementation differs from the exact original installed runtime')
-    rules = _ref(Path(review_rules.__file__).resolve())
-    if any(rules[key] != originals[2][key] for key in ('sha256','size_bytes')):
-        raise ValueError('Startup recovery cannot change scientific review rules')
-    def semantics(file):
-        tree = ast.parse(Path(file).read_text())
-        tree.body = [node for node in tree.body if not isinstance(node,ast.FunctionDef) or node.name!='contract']
-        return ast.dump(tree,include_attributes=False)
-    if semantics(old/'formal_review.py') != semantics(Path(formal_review.__file__)):
-        raise ValueError('Startup recovery changed review logic outside the exact contract compatibility seam')
     return policy['contract']
 
 
@@ -264,8 +248,8 @@ def validate_intent(root, job, intent):
 
 
 def verify_program(value):
-    _check(value['native_program'])
-    for ref in value['launcher_files']:_check(ref)
+    c.regular(Path(value['native_program']['path']))
+    for ref in value['launcher_files']:c.regular(Path(ref['path']))
 
 
 def _admission(root, step, value):
@@ -282,7 +266,7 @@ def _admission(root, step, value):
             raise ValueError('Original finite final-A time or control-step authorization is exhausted')
 
 
-def start(root, step, *, reconciliation, reconciliation_sha256, original_runtime_root, native_home, authorization_statement):
+def start(root, step, *, reconciliation, reconciliation_sha256, native_home, authorization_statement):
     """Explicit supported entry; subsequent calls collect only the same attempt."""
     from . import budget,execution,native,runtime
     from .controller import _writer,_inactive_on_error,_run
@@ -305,19 +289,14 @@ def start(root, step, *, reconciliation, reconciliation_sha256, original_runtime
                 identity = c.read(Path(originals[name]['path']))
                 if runtime.process_matches(identity,originals['job']['sha256']):
                     raise ValueError('Original startup writer is still live')
-            old = list(Path(original_runtime_root).resolve().glob('lib/python*/site-packages/scidiscovery/research_loop'))
-            if len(old) != 1:raise ValueError('One explicit original installed runtime is required')
-            if old[0].resolve() == Path(__file__).resolve().parent:raise ValueError('Recovery requires a separate installed runtime')
             settings = c.settings(root)
             program = shutil.which(settings['native_launcher_argv'][0])
             if program is None:raise ValueError('Exact native launcher is unavailable')
             if Path(program).resolve().name == 'codex.js':
                 from .native_execution import _native_program
                 program = _native_program(settings['native_launcher_argv'])
-            program_ref = _ref(Path(program).resolve())
-            attribution = report.get('native_implementation_attribution') or {}
-            if attribution.get('postcall_sha256') != program_ref['sha256']:
-                raise ValueError('Native executable differs from the reviewed startup source attribution')
+            program_ref = dict(path=str(Path(program).resolve()),
+                sha256=_native_attribution(report)['postcall_sha256'])
             home = Path(native_home).resolve()
             if not home.is_dir() or not os.access(home,os.W_OK):raise ValueError('Explicit original writable native home is required')
             evidence = permit_path.parent/f'{step:03d}-reconciliation.json'
@@ -328,12 +307,11 @@ def start(root, step, *, reconciliation, reconciliation_sha256, original_runtime
                 evidence.chmod(0o400)
             value = dict(version=1,scope='first_model_submission_after_reconciled_startup',root=str(root),step=step,
                 successor_attempt=1,originals=originals,reconciliation=_ref(evidence),final_return=marker,
-                original_package=str(old[0].resolve()),original_implementation=_implementation(old[0],ORIGINAL_FILES),implementation=_implementation(Path(__file__).parent,FILES),
                 native_profile=profiles.for_job(settings,c.read(Path(originals['job']['path']))),native_home=str(home),
                 review_contract=({**settings['formal_review_policy']['contract'],
                     'path':str(root/settings['formal_review_policy']['contract']['path'])} if settings.get('formal_review_policy') is not None else None),
                 native_home_config=_ref(home/'config.toml') if (home/'config.toml').exists() else None,
-                native_program=program_ref,launcher_files=[_ref(Path(arg).resolve()) for arg in settings['native_launcher_argv'][1:] if Path(arg).is_file()],
+                native_program=program_ref,launcher_files=[dict(path=str(Path(arg).resolve())) for arg in settings['native_launcher_argv'][1:] if Path(arg).is_file()],
                 authorization_statement=authorization_statement,
                 trust='Explicit acceptance of exact independent engineering evidence and its disclosed limitations; no scientific qualification.')
             require_eligibility(root,step,value,initial=True)
@@ -392,10 +370,8 @@ def _collection_report(root, original, report):
         successor_scientific_raw=current/'science-output.json')
     if any(refs.get(name) != _ref(file) for name,file in expected.items()):
         raise ValueError('Delivery reconciliation changed its exact original receipts')
-    if (report.get('accepted_implementation') != original['implementation']
-            or report.get('additional_read_implementation') != [_ref(Path(original['implementation'][0]['path']).parent/'delivery.py')]):
+    if report.get('accepted_implementation',[]) != original.get('implementation',[]):
         raise ValueError('Delivery reconciliation changed the accepted source-order implementation')
-    for ref in [*original['implementation'],*report['additional_read_implementation']]:_check(ref)
     prefix = report.get('control_ledger_prefix') or []
     if len(prefix) != action['seq'] or any(ref != _ref(Path(root)/'control-ledger'/f'{number:06d}.json')
             for number,ref in enumerate(prefix,1)):
@@ -426,19 +402,16 @@ def _collection_binding(root, original):
     if (receipt.get('version') != 1 or receipt.get('scope') != 'sealed_final_a_original_delivery_only'
             or receipt.get('root') != str(root) or receipt.get('step') != original['step']
             or receipt.get('startup_permit') != _ref(path(root,original['step']))
-            or not isinstance(receipt.get('authorization_statement'),str) or not receipt['authorization_statement'].strip()
-            or receipt.get('implementation') != _implementation(Path(__file__).parent,COLLECTION_FILES)):
-        raise ValueError('Exact collector-only implementation authorization is required')
-    for ref in original['implementation']:_check(ref)
+            or not isinstance(receipt.get('authorization_statement'),str) or not receipt['authorization_statement'].strip()):
+        raise ValueError('Exact collector-only authorization is required')
     # Authorization binds exact objects and limits only. Positive recovery and
     # scientific/result predicates are checked separately before publication.
     report = c.read(_check(receipt['reconciliation']))
     # These are grant/declaration objects, not execution-result predicates.
     for name in ('settings','settings_identity','job','startup_permit','final_claim','action_intent'):
         _check(report['originals'][name])
-    if report['accepted_implementation'] != original['implementation']:
+    if report.get('accepted_implementation',[]) != original.get('implementation',[]):
         raise ValueError('Collector changed its accepted implementation identity')
-    for ref in report['additional_read_implementation']:_check(ref)
     action = c.read(_check(report['originals']['action_intent']))
     if report['originals']['action_intent'] != _ref(root/'control-ledger'/f'{action["seq"]:06d}.json'):
         raise ValueError('Collector changed its exact original action reference')
@@ -501,7 +474,6 @@ def collect_delivery(root, step, *, reconciliation, reconciliation_sha256, autho
                 startup_permit=_ref(path(root,step)),reconciliation=_ref(evidence),
                 action_id=action['action_id'],operation_id=action['operation_id'],
                 limits=dict(max_seconds=action['max_seconds'],max_invocations=1,native_dispatches=0),
-                implementation=_implementation(Path(__file__).parent,COLLECTION_FILES),
                 boot_id=c.read(root/'control-ledger'/f'{original["final_return"]["seq"]:06d}.json')['anchor']['boot_id'],
                 advance_seconds=action['advance_seconds'],authorization_statement=authorization_statement,
                 safety='One first actual invocation with the unchanged original finite call cap; all original global time and usage retained. No native dispatch, review qualification or new scientific allowance.')

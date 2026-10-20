@@ -107,8 +107,6 @@ def validate_exact_input_sources(root, job, accepted):
             or q._read(root, view['native_intent'])['task_sha256'] != view['job']['sha256']
             or accepted['interface']['config_sha256'] != hashlib.sha256(e.encoded({key:value for key,value in config.items() if key != 'execution_interface'})).hexdigest()):
         raise q.IntegrityError('Declared input view differs from its original native owner')
-    for asset in accepted['interface']['code']:
-        q._check(asset)
     if not isinstance(view['evidence'], list) or not view['evidence']:
         raise q.IntegrityError('Declared input view omitted its actual preparation evidence')
     for ref in view['evidence']:
@@ -334,15 +332,10 @@ def verify_compilation(root, ref, *, material=None, client_binding=None):
         raise q.IntegrityError('Compiler native task/configuration original changed')
     if value['implementation'] != config['execution_interface']:
         raise q.IntegrityError('Compiler implementation differs from its frozen interface')
-    for item in value['implementation']['code']:
-        q._check(item)
     declared = [item for item in value['implementation'].get('public_capabilities', [])
                 if item['key'] == 'implementation_authoring']
     if len(declared) != 1 or value['contract'] != declared[0]:
         raise q.IntegrityError('Compiler public contract changed')
-    q._check(value['capability_source'])
-    if value['capability_source'] not in value['implementation']['code']:
-        raise q.IntegrityError('Compiler capability was not frozen by the host interface')
     if any(value['capability'][key] != value['capability_source'][key] for key in ('sha256', 'size_bytes')):
         raise q.IntegrityError('Compiler retained capability differs from its operator original')
     q._read(root, value['capability']); q._read(root, value['author'])
@@ -533,7 +526,7 @@ def local_input_sources(config, interface, payload, metadata):
     """Called by the actual adapter before acceptance; no scientific inference."""
     from . import experiments as e
     if (not isinstance(interface, dict) or interface.get('version') != e.VERSION
-            or not interface.get('code') or 'entry' not in metadata):
+            or 'entry' not in metadata):
         return None
     root = experiment_client.root_for_configuration(config, allow_standalone=True)
     if root is None:
@@ -592,8 +585,6 @@ def validate_local_input_sources(root, job, accepted):
             or q._read(root, view['native_intent'])['task_sha256'] != view['job']['sha256']
             or accepted['config_sha256'] != hashlib.sha256(e.encoded({key:value for key,value in config.items() if key != 'execution_interface'})).hexdigest()):
         raise q.IntegrityError('Local input view lost its exact host owner')
-    for asset in accepted['interface']['code']:
-        q._check(asset)
     directory = Path(accepted['experiment_directory']); authoring = _local_authoring(work, directory)
     snapshot = experiment_client.record_directory(root, job['step']) / 'calls' / accepted['call_id']
     if (accepted.get('cwd') != str(snapshot / 'inputs')

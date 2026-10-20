@@ -440,7 +440,7 @@ def isolate(request, adapter):
     deadline = request.get('deadline_boottime') if request['phase']=='replay' else None
     if request['phase']=='replay' and (type(deadline) not in (int,float) or not 0 < deadline < float('inf')):
         raise ValueError('Replay requires its original absolute deadline')
-    if runtime is None or python.absolute() != Path(runtime['invoked_path']) or python.resolve() != Path(runtime['path']) or _sha(python.resolve(), deadline=deadline) != runtime['sha256']:
+    if runtime is None or python.absolute() != Path(runtime['invoked_path']) or python.resolve() != Path(runtime['path']):
         raise ValueError('Frozen task interpreter changed')
     bwrap = shutil.which('bwrap')
     if bwrap is None:

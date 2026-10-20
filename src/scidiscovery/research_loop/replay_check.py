@@ -1,7 +1,6 @@
 """Optional engineering feedback on a confirmed call, never scientific qualification."""
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 
@@ -40,7 +39,7 @@ def acceptance(config, adapter):
     seconds = config.get('max_seconds')
     bound = dict(version=1, capability=dict(key=item.key, schema_id=item.schema_id,
         payload_schema_version=item.payload_schema_version, media_type=item.media_type,
-        sha256=hashlib.sha256(item.content).hexdigest(), policy=policy),
+        policy=policy),
         boot_id=stamp['boot_id'], deadline_boottime=(stamp['at_boottime'] + seconds
             if type(seconds) in (int, float) and 0 < seconds < float('inf') else None))
     reserve = reserve_seconds(config)
@@ -167,7 +166,7 @@ def complete(config, adapter, call_id, observation):
                     or observation['completed'] != e.proof(directory / 'completed.json')):
                 raise e.IntegrityError('Engineering check has no exact confirmed completion')
             declared = [item for item in adapter.capabilities() if item.key == KEY]
-            available = (len(declared) == 1 and hashlib.sha256(declared[0].content).hexdigest() == bound['capability']['sha256'])
+            available = (len(declared) == 1 and callable(getattr(adapter,'replay_check',None)))
             deadline = _deadline(config, bound)
             intent = dict(accepted_sha256=e.proof(directory / 'accepted.json')['sha256'],
                 completed_sha256=e.proof(directory / 'completed.json')['sha256'],

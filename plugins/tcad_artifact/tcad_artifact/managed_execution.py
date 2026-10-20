@@ -146,16 +146,6 @@ class TCADManagedExecution:
         self.target = dict(transport=self.transport.model_dump(mode='json'),
                            configuration_files=[e.proof(path) for path in assets])
 
-    def code_assets(self):
-        root = Path(__file__).parent
-        names = ('managed_execution.py', 'runtime_plugin.py', 'execution_adapter.py',
-                 'command_adapter.py', 'project_packager.py', 'execution_policy.py',
-                 'execution_control.py', 'ssh_transport.py', 'transport_logs.py', 'remote_runner_py36.py',
-                 'native_implementation.py')
-        from scidiscovery.research_loop import execution_inputs
-        return [str(root / name) for name in names] + [item['path'] for item in self.target['configuration_files']] + [
-            str(Path(execution_inputs.__file__).resolve()), str(Path(c.__file__).resolve())]
-
     @staticmethod
     def lifecycle_capabilities():
         return LifecycleCapabilities(lookup_submission=True, query=True, cancel=True,

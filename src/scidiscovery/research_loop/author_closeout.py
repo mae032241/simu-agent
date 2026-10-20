@@ -299,9 +299,6 @@ def validate(root, value):
         validate_successor(root,c.read(c.regular(successor)),original=value)
     else:
         _validate_original(root,value)
-        for item in value['implementation']:
-            if _verified_digest(Path(item['path']))[0]!=item['sha256']:
-                raise ValueError('Author closeout implementation changed')
     return value
 
 
@@ -502,14 +499,12 @@ def start(root, step, *, max_tokens, max_seconds, authorization_note):
             or budget.effective_max_steps(root)-budget.used_steps(root)<1+reserve['steps']):
         raise ValueError('Finite author closeout and delivery reserve exceed remaining authorization')
     facts=terminal_facts(root,step)
-    implementations=_implementation_paths(settings)
     permit=dict(version=1,scope='author_closeout_only',context='new_context',step=step,source_attempt=0,
         max_tokens=max_tokens,max_seconds=max_seconds,authorization_note=authorization_note.strip(),
         job=_ref(root,root/'jobs'/f'{step:03d}.json'),settings=_ref(root,root/'settings.json'),
         original_intent=_ref(root,origin/'native-intent.json'),original_outcome=_ref(root,origin/'native-outcome.json'),
         original_usage=_ref(root,origin/'usage.json'),
-        original_experiment_config=_ref(root,origin/'experiment-config.json'),calls=_calls(root,step),
-        implementation=[dict(path=str(p),sha256=c.digest(p)) for p in dict.fromkeys(implementations)])
+        original_experiment_config=_ref(root,origin/'experiment-config.json'),calls=_calls(root,step))
     require_original_eligibility(root,permit)
     path=root/'host-recovery/author-closeout'/f'{step:03d}.json'
     if path.exists():raise ValueError('Original author closeout authorization already exists; no automatic replay')
@@ -549,36 +544,6 @@ def successor_path(root, step):
     return Path(root)/'host-recovery/author-closeout'/f'{step:03d}-successor.json'
 
 
-def _implementation_paths(settings):
-    paths=[Path(__file__).with_name(name+'.py').resolve() for name in
-        ('candidate_audit','continuation','controller','native','execution','budget','contracts','author_closeout','cli',
-         'experiments','experiment_client','worker_execution_bridge','candidate_refs','history','lineage','execution_inputs','qualification','formal_review','replay_check',
-         'cov_experiments','cov_lineage','cov_delivery')]
-    paths.extend(Path(value).resolve() for value in settings['native_launcher_argv'] if Path(value).is_file())
-    paths.extend(Path(item['path']).resolve() for item in (settings.get('execution_config') or {}).get('implementation',{}).get('code',[]))
-    return list(dict.fromkeys(paths))
-
-
-def _implementation_refs(settings):
-    return [dict(path=str(path),sha256=_verified_digest(path)[0]) for path in _implementation_paths(settings)]
-
-
-def _retained_implementation(root, old, manifest_ref):
-    manifest=c.read(_check(root,manifest_ref))
-    expected_path=root/'host-recovery/author-closeout'/f'{old["step"]:03d}.json'
-    expected=_ref(root,expected_path)
-    if (manifest.get('version')!=1 or manifest.get('original_permit')!={key:expected[key] for key in ('path','sha256')}
-            or not isinstance(manifest.get('files'),list)
-            or len(manifest['files'])!=len(old['implementation'])):
-        raise ValueError('Retained implementation does not bind the original author permit')
-    for original,retained in zip(old['implementation'],manifest['files']):
-        if (retained.get('original_path')!=original['path'] or retained.get('sha256')!=original['sha256']
-                or retained.get('retained',{}).get('sha256')!=original['sha256']):
-            raise ValueError('Retained implementation differs from the original declared digest')
-        _check(root,retained['retained'])
-    return manifest
-
-
 def validate_successor(root, value, *, original=None):
     """Pure exact-original checks, never usage/records/snapshot or a new grant."""
     root=Path(root)
@@ -597,12 +562,9 @@ def validate_successor(root, value, *, original=None):
     if old.get('step')!=step:raise ValueError('Author successor original step changed')
     if original is not None and old!=original:raise ValueError('Author successor original permit changed')
     _validate_original(root,old)
-    _retained_implementation(root,old,value['retained_implementation'])
     output_upgrade=_output_record(root,step,'upgrade')
     if output_upgrade.exists():
         _validate_output_upgrade(root,c.read(c.regular(output_upgrade)),successor=value)
-    elif value.get('implementation')!=_implementation_refs(c.settings(root)):
-        raise ValueError('Author successor current implementation changed')
     prior=root/'native-evidence'/f'{step:03d}'/'continuations/001'
     if set(value.get('source_originals',{}))!={'native-intent.json','native-outcome.json','usage.json','usage-observation.json','native.jsonl','runner-process.json','native-process.json'}:
         raise ValueError('Author successor needs the exact stopped source originals')
@@ -663,7 +625,7 @@ def _successor_facts(root, step):
 
 
 def start_successor(root, step, *, max_tokens, max_seconds, authorization_note,
-                    authorization_statement, retained_implementation, retained_implementation_sha256):
+                    authorization_statement):
     """One new operator action, never an automatic retry or a resume-policy edit."""
     from . import budget,execution,native,profiles,runtime
     root=Path(root);origin=execution.origin(root,step)
@@ -671,17 +633,12 @@ def start_successor(root, step, *, max_tokens, max_seconds, authorization_note,
             or not 0<max_seconds<float('inf') or any(not isinstance(text,str) or not text.strip()
                 for text in (authorization_note,authorization_statement))):
         raise ValueError('Finite author successor budget and original authorization are required')
-    manifest=Path(retained_implementation).absolute()
-    manifest_ref=_ref(root,manifest)
-    if manifest_ref['sha256']!=retained_implementation_sha256:
-        raise ValueError('Retained implementation manifest changed')
     path=successor_path(root,step)
     if path.exists():
         permit=validate_successor(root,c.read(c.regular(path)))
         if (permit['max_tokens']!=max_tokens or permit['max_seconds']!=max_seconds
                 or permit['authorization_note']!=authorization_note.strip()
-                or permit['authorization_statement']!=authorization_statement.strip()
-                or permit['retained_implementation']!=manifest_ref):
+                or permit['authorization_statement']!=authorization_statement.strip()):
             raise ValueError('Original author successor authorization cannot be replaced')
     else:
         if (origin/'result-identity.json').exists() or (origin/'continuations/002').exists():
@@ -690,12 +647,10 @@ def start_successor(root, step, *, max_tokens, max_seconds, authorization_note,
             source_attempt=1,attempt=2,max_tokens=max_tokens,max_seconds=max_seconds,
             authorization_note=authorization_note.strip(),authorization_statement=authorization_statement.strip(),
             original_permit=_ref(root,root/'host-recovery/author-closeout'/f'{step:03d}.json'),
-            retained_implementation=manifest_ref,implementation=_implementation_refs(c.settings(root)),
             source_originals={name:_ref(root,origin/'continuations/001'/name) for name in
                 ('native-intent.json','native-outcome.json','usage.json','usage-observation.json','native.jsonl','runner-process.json','native-process.json')})
         validate_successor(root,permit)
-        # Publishing an authorization is not dispatch. It also lets historical
-        # validation verify retained old bytes after this explicit code upgrade.
+        # Publishing an authorization is not dispatch.
         c.write(path,permit);path.chmod(0o400)
     paths=execution.records(root,step)
     if len(paths)==3:return native.wait_native(root,step)  # Collect exact accepted 2, never create 3.
@@ -754,21 +709,8 @@ def _output_record(root, step, kind):
     return Path(root)/'host-recovery/author-closeout'/f'{step:03d}-output-{kind}.json'
 
 
-def _host_ref(path):
-    path=Path(path).absolute();sha,size=_verified_digest(path)
-    return dict(path=str(path),sha256=sha,size_bytes=size)
-
-
-def _host_check(ref):
-    if (not isinstance(ref,dict) or set(ref)!={'path','sha256','size_bytes'}
-            or not isinstance(ref['path'],str) or not Path(ref['path']).is_absolute()
-            or _host_ref(Path(ref['path']))!=ref):
-        raise ValueError('Retained host implementation original changed')
-    return Path(ref['path'])
-
-
 def _validate_output_upgrade(root, value, *, successor=None):
-    """Code provenance only: no stop exception, output acceptance or dispatch."""
+    """Bind output authorization to its exact successor without executing work."""
     root=Path(root)
     if (value.get('version')!=1 or value.get('scope')!='completed_author_output_code_upgrade'
             or type(value.get('step')) is not int or value['step']<=0 or value.get('attempt')!=2
@@ -779,20 +721,6 @@ def _validate_output_upgrade(root, value, *, successor=None):
     if _check(root,value['successor'])!=path:raise ValueError('Output upgrade changed its author successor')
     original=c.read(path)
     if successor is not None and original!=successor:raise ValueError('Output upgrade successor changed')
-    manifest=c.read(_host_check(value['retained_manifest']))
-    if (manifest.get('successor_receipt')!={'path':str(path),'sha256':value['successor']['sha256']}
-            or not isinstance(manifest.get('files'),list)
-            or len(manifest['files'])!=len(original['implementation'])
-            or len(value.get('retained_files',[]))!=len(original['implementation'])):
-        raise ValueError('Output upgrade does not bind every historical implementation')
-    for declared,old,proof in zip(original['implementation'],manifest['files'],value['retained_files']):
-        if (old.get('original_path')!=declared['path'] or old.get('sha256')!=declared['sha256']
-                or proof.get('path')!=old.get('retained') or proof.get('sha256')!=declared['sha256']
-                or proof.get('size_bytes')!=old.get('size_bytes')):
-            raise ValueError('Output upgrade historical declared digest changed')
-        _host_check(proof)
-    if value.get('implementation')!=_implementation_refs(c.settings(root)):
-        raise ValueError('Completed-output current implementation changed')
     return value
 
 
@@ -998,8 +926,7 @@ def accepted_output(root, step, record, intent, outcome):
     return dict(receipt=_ref(root,path),raw_sha256=value['originals']['result.pending.json']['sha256'],facts=value['facts'])
 
 
-def accept_completed_output(root, step, *, attempt, pending_sha256, session, retained_implementation,
-                            retained_implementation_sha256, authorization_note, authorization_statement):
+def accept_completed_output(root, step, *, attempt, pending_sha256, session, authorization_note, authorization_statement):
     """Publish already returned author bytes; never launch native or executor work."""
     from . import budget,execution,native,runtime
     root=Path(root)
@@ -1009,20 +936,15 @@ def accept_completed_output(root, step, *, attempt, pending_sha256, session, ret
     record=root/'native-evidence'/f'{step:03d}'/'continuations/002'
     pending=_ref(root,record/'result.pending.json')
     if pending['sha256']!=pending_sha256:raise ValueError('Explicit pending output digest changed')
-    manifest=_host_ref(retained_implementation)
-    if manifest['sha256']!=retained_implementation_sha256:raise ValueError('Explicit retained implementation manifest changed')
     upgrade_path=_output_record(root,step,'upgrade')
     if upgrade_path.exists():
         upgrade=_validate_output_upgrade(root,c.read(c.regular(upgrade_path)))
-        if (upgrade['retained_manifest']!=manifest or upgrade['authorization_note']!=authorization_note.strip()
+        if (upgrade['authorization_note']!=authorization_note.strip()
                 or upgrade['authorization_statement']!=authorization_statement.strip()):
             raise ValueError('Original completed-output authorization cannot be replaced')
     else:
-        old_manifest=c.read(_host_check(manifest))
         upgrade=dict(version=1,scope='completed_author_output_code_upgrade',step=step,attempt=2,
-            successor=_ref(root,successor_path(root,step)),retained_manifest=manifest,
-            retained_files=[_host_ref(item['retained']) for item in old_manifest['files']],
-            implementation=_implementation_refs(c.settings(root)),authorization_note=authorization_note.strip(),
+            successor=_ref(root,successor_path(root,step)),authorization_note=authorization_note.strip(),
             authorization_statement=authorization_statement.strip())
         _validate_output_upgrade(root,upgrade)
         c.write(upgrade_path,upgrade);upgrade_path.chmod(0o400)

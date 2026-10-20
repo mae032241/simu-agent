@@ -87,15 +87,13 @@ def _config(path):
             raise ValueError('Explicit scientific worker view version required')
         keys.add('worker_view_version')
     if 'host_launch_implementation' in value:
-        from . import experiments
         implementations=value['host_launch_implementation']
         if (not isinstance(implementations,list) or any(not isinstance(item,dict)
                 or set(item)!={'path','sha256','size_bytes'} or not isinstance(item['path'],str)
                 or not Path(item['path']).is_absolute() or not isinstance(item['sha256'],str)
                 or len(item['sha256'])!=64 or any(char not in '0123456789abcdef' for char in item['sha256'])
-                or type(item['size_bytes']) is not int or item['size_bytes']<0
-                or experiments.proof(item['path'])!=item for item in implementations)):
-            raise ValueError('Frozen host launcher implementation changed')
+                or type(item['size_bytes']) is not int or item['size_bytes']<0 for item in implementations)):
+            raise ValueError('Host launcher implementation metadata is malformed')
         keys.add('host_launch_implementation')
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')

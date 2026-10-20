@@ -120,21 +120,11 @@ def verify_pending_set(root, seal, allocation_ref=None, *, unprepared=False, req
     for proofs in value['attempts']:
         for proof in proofs.values():
             q._read(root, proof)
-    checked_code=set()
     for row in value['allocations']:
         if context is not None:context.remaining_seconds()
         allocation = q._read(root, row['allocation'])
         if allocation['call_id'] != row['call_id'] or allocation['binding']['scope']['job_sha256'] != seal['job_sha256']:
             raise q.IntegrityError('Pending allocation escaped its original job')
-        for identity in allocation['binding']['interface']['code']:
-            key=(identity['path'],identity['sha256'],identity['size_bytes'])
-            if key in checked_code:continue
-            if context is None:q._check(identity)
-            else:
-                from . import experiments
-                if experiments.proof(identity['path'],context=context)!=identity:
-                    raise q.IntegrityError('Pending implementation original changed')
-            checked_code.add(key)
         for proof in row['requests']:
             request = q._read(root, proof)
             if request['call_id'] != row['call_id'] or request['job'] != value['job']:
