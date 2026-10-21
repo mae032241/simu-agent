@@ -82,9 +82,10 @@ def chain(tmp_path, monkeypatch, request):
     root = tmp_path / 'instance'
     options = dict(transport='socket', socket_path=str(tmp_path / 'unused.sock'),
         implementation_compilation=dict(capability_snapshot_path=str(snapshot)))
+    plugin_config = tmp_path / 'tcad-plugin.json'; c.write(plugin_config, options)
     controller.prepare(root, objective, public, [str(launcher)], max_tokens=4000, max_seconds=1000,
         max_steps=12, model='fixture', reasoning_effort='high', search_policy=None, experiment_mode='local',
-        node_budget_mode='soft', execution_config=dict(executor='tcad_execution:tcad', configuration=options),
+        node_budget_mode='soft', execution_config=dict(executor='tcad_execution:tcad', config_file=str(plugin_config)),
         formal_review_policy={'version': 1}, execution_authority_policy={'version': 1},
         execution_resource_policy=dict(version=1, allowance=dict(wall_time_seconds=100, max_storage_bytes=1000000)),
         source_restrictions=[] if getattr(request, 'param', None) == 'unknown_source' else [

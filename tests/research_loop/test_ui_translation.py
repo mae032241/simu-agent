@@ -1,5 +1,6 @@
 """Application translations: exact durable cache, explicit work, isolated transport."""
 import json
+import re
 import sqlite3
 import sys
 import threading
@@ -168,10 +169,17 @@ def test_failed_work_is_durable_and_retries_only_on_explicit_start(services, mon
     failed = settled(service, ["source"])
     assert failed["entries"][0]["status"] == "failed"
     assert "private" not in json.dumps(failed)
+    message = failed["entries"][0]["error"]
+    assert "[translation_internal_error]" in message
+    reference = re.search(r"诊断编号：([0-9a-f]{32})", message).group(1)
+    diagnostic = service.directory / "errors" / (reference + ".json")
+    assert "private stderr token /science/private" in diagnostic.read_text()
+    assert diagnostic.stat().st_mode & 0o777 == 0o600
+    assert service._thread.is_alive()
     service.close()
     service = services()
     for _ in range(3):
-        assert service.lookup(["source"])["entries"][0]["status"] == "failed"
+        assert service.lookup(["source"])["entries"][0]["error"] == message
     assert len(attempts) == 1
     service.start(["source"])
     assert settled(service, ["source"])["entries"][0]["translation"] == "recovered"
@@ -230,7 +238,8 @@ def test_cache_write_failure_does_not_strand_pending_work_or_leak_errors(service
     service.start(["source"])
     response = settled(service, ["source"])
     assert response["entries"][0]["status"] == "failed"
-    assert "cache could not be saved" in response["entries"][0]["error"]
+    assert "[translation_cache_write]" in response["entries"][0]["error"]
+    assert "写入权限" in response["entries"][0]["error"]
     assert "private" not in json.dumps(response)
     assert service._thread.is_alive()
     with service._condition, service._db:
@@ -311,10 +320,11 @@ def test_protocol_adapter_runs_fake_launcher_and_records_only_application_usage(
 
 @pytest.mark.process_e2e
 @pytest.mark.parametrize("program, timeout, expected", [
-    ("import time; time.sleep(10)", 1, "timed out"),
-    ("import sys; sys.stdout.write('x' * 1100000); sys.stdout.flush()", 3, "limit"),
-    ("import json; print(json.dumps(dict(type='tool',tool='shell',status='started')),flush=True)", 3, "tool action"),
-    ("import sys; sys.stderr.write('secret-token /private/science'); sys.exit(1)", 3, "did not complete"),
+    ("import time; time.sleep(10)", 1, "translation_timeout"),
+    ("import sys; sys.stdout.write('x' * 1100000); sys.stdout.flush()", 3, "translation_output_limit"),
+    ("import json; print(json.dumps(dict(type='tool',tool='shell',status='started')),flush=True)", 3, "translation_tool_action"),
+    ("import sys; sys.stderr.write('secret-token /private/science'); sys.exit(1)", 3, "translation_backend_exit"),
+    ("import sys; sys.stdin.read()", 3, "translation_missing_completion"),
 ])
 def test_process_failures_are_bounded_private_and_never_replayed(services, tmp_path, program, timeout, expected):
     script = tmp_path / "fake_translation.py"
@@ -329,6 +339,102 @@ def test_process_failures_are_bounded_private_and_never_replayed(services, tmp_p
     assert "/private" not in json.dumps(response)
     assert service._process is None
     assert service.lookup(["Original"])["entries"][0]["status"] == "failed"
+
+
+@pytest.mark.parametrize("details, code", [
+    ("The requested model gpt6-luna does not exist", "model_rejected"),
+    ("Unsupported_model: bad-model", "model_rejected"),
+    ("401 invalid_api_key private-token", "authentication"),
+    ("connection refused /private/proxy", "network"),
+    ("429 insufficient_quota private-account", "rate_limit"),
+    ("request timed out", "timeout"),
+    ("unrecognized secret-token /private/path", "backend_exit"),
+])
+def test_backend_failure_categories_only_return_host_authored_codes(details, code):
+    assert translation._failure_kind(details, "backend_exit") == code
+    assert details not in translation._FAILURES[code]
+
+
+def test_diagnostic_write_failure_keeps_worker_available_and_public_error_safe(services, monkeypatch):
+    monkeypatch.setattr(translation.ui_errors, "record", lambda *args, **kwargs: None)
+    monkeypatch.setattr(translation.TranslationService, "_translate",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("secret-token /private/path")))
+    service = services(config=dict(model="app-model"))
+    service.start(["source"])
+    response = settled(service, ["source"])
+    message = response["entries"][0]["error"]
+    assert "[translation_internal_error]" in message
+    assert "诊断未能保存" in message
+    assert "secret-token" not in json.dumps(response)
+    assert service._thread.is_alive()
+
+
+@pytest.mark.process_e2e
+@pytest.mark.parametrize("kind", ["error", "turn.failed"])
+def test_native_codex_failures_keep_original_private_evidence_and_durable_safe_reason(services, tmp_path, kind):
+    script = tmp_path / "fake_native_translation.py"
+    private_message = "The requested model gpt6-luna does not exist; secret-token /private/science"
+    script.write_text("import json,sys\nsys.stdin.read()\n"
+        + "sys.stderr.write('discarded-prefix' + 'x' * 200000 + 'retained-stderr-tail')\n"
+        + "print(json.dumps(" + repr(dict(type=kind, error=dict(message=private_message))) + "), flush=True)\n"
+        + "sys.exit(7)\n")
+    service = services(config=dict(backend="codex", launcher_argv=[sys.executable, str(script)], model="gpt6-luna"))
+    service.start(["source"])
+    response = settled(service, ["source"])
+    message = response["entries"][0]["error"]
+    assert "[translation_model_rejected]" in message
+    assert "核对模型名称" in message
+    assert all(secret not in json.dumps(response) for secret in ("secret-token", "/private", "gpt6-luna"))
+    reference = re.search(r"诊断编号：([0-9a-f]{32})", message).group(1)
+    diagnostic = tmp_path / ".scid-ui/errors" / (reference + ".json")
+    evidence = json.loads(diagnostic.read_text())["traceback"]
+    assert private_message in evidence
+    assert kind in evidence
+    assert '"returncode": 7' in evidence
+    assert "retained-stderr-tail" in evidence
+    assert "discarded-prefix" not in evidence
+    assert diagnostic.stat().st_size <= 16384
+    assert service._process is None and service._thread.is_alive()
+    service.close()
+    restarted = services()
+    assert restarted.lookup(["source"])["entries"][0]["error"] == message
+    with sqlite3.connect(tmp_path / ".scid-ui/translations.sqlite3") as database:
+        assert database.execute("SELECT error FROM translations").fetchone()[0] == message
+        assert database.execute("SELECT status,usage FROM translation_invocations").fetchone() == ("failed", None)
+
+
+@pytest.mark.process_e2e
+def test_protocol_failure_preserves_observed_usage_and_overrides_completion(services, tmp_path):
+    script = tmp_path / "fake_failed_protocol.py"
+    script.write_text("import json,sys\njson.load(sys.stdin)\n"
+        "print(json.dumps(dict(type='usage',usage=dict(input_tokens=8,output_tokens=4))),flush=True)\n"
+        "print(json.dumps(dict(type='result',result=dict(translations=[dict(id='0',text='must not cache')]))),flush=True)\n"
+        "print(json.dumps(dict(type='error',message='401 invalid_api_key secret-token')),flush=True)\n"
+        "print(json.dumps(dict(type='completed')),flush=True)\n")
+    service = services(config=dict(backend="protocol", launcher_argv=[sys.executable, str(script)], model="app-model"))
+    service.start(["source"])
+    response = settled(service, ["source"])
+    assert response["entries"][0]["translation"] is None
+    assert "[translation_authentication]" in response["entries"][0]["error"]
+    assert "secret-token" not in json.dumps(response)
+    with sqlite3.connect(tmp_path / ".scid-ui/translations.sqlite3") as database:
+        status, usage = database.execute("SELECT status,usage FROM translation_invocations").fetchone()
+        assert status == "failed"
+        assert json.loads(usage) == dict(input_tokens=8, cached_input_tokens=0, output_tokens=4)
+
+
+@pytest.mark.process_e2e
+def test_missing_launcher_has_private_original_and_actionable_reason(services, tmp_path):
+    missing = tmp_path / "private-launcher-not-installed"
+    service = services(config=dict(backend="protocol", launcher_argv=[str(missing)], model="app-model"))
+    service.start(["source"])
+    response = settled(service, ["source"])
+    message = response["entries"][0]["error"]
+    assert "[translation_launcher_unavailable]" in message
+    assert "执行权限" in message
+    assert str(missing) not in json.dumps(response)
+    reference = re.search(r"诊断编号：([0-9a-f]{32})", message).group(1)
+    assert str(missing) in (tmp_path / ".scid-ui/errors" / (reference + ".json")).read_text()
 
 
 @pytest.mark.process_e2e

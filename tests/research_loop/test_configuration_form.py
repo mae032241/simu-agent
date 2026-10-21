@@ -55,6 +55,20 @@ def complete(tmp_path):
         budget=dict(max_tokens=1000, max_seconds=120, max_steps=8)), base=tmp_path)
 
 
+def test_plugin_fields_roundtrip_and_export_preserves_file_base(tmp_path):
+    draft = complete(tmp_path)
+    draft['document']['executor'] = dict(config=dict(executor='third_party:binding', config_file='./plugin.toml'))
+    fields = submitted(draft)
+    assert fields['cfg.executor.config.executor'] == 'third_party:binding'
+    assert fields['cfg.executor.config.config_file'] == './plugin.toml'
+    parsed = form.parse(fields, base=tmp_path)
+    assert form.declaration(parsed) == form.declaration(draft)
+    exported = research_config.tomllib.loads(form.export_toml(parsed))
+    assert exported['executor']['config']['config_file'] == str(tmp_path / 'plugin.toml')
+    assert research_config.from_document(exported, base=tmp_path/'elsewhere')['execution_config'] == {
+        'executor': 'third_party:binding', 'config_file': str(tmp_path/'plugin.toml')}
+
+
 def test_blank_page_has_no_implicit_inputs_or_budgets(tmp_path):
     (tmp_path / 'research.toml').write_text('must not be read')
     draft = form.blank(base=tmp_path)
@@ -117,7 +131,7 @@ def test_extensions_are_editable_and_optional_groups_can_be_omitted(tmp_path):
     fields[flag+'.value'] = 'false'
     parsed = form.parse(fields,base=tmp_path)
     assert parsed['document']['executor']['config']['configuration']['flag'] is False
-    del fields['enabled.executor.config']
+    del fields['enabled.executor.config.configuration']
     assert 'executor' not in form.parse(fields,base=tmp_path)['document']
     with pytest.raises(ValueError,match='有效的整数'):
         form.parse(dict(fields, **{'cfg.budget.max_tokens':'not-integer'}),base=tmp_path)

@@ -258,6 +258,66 @@ def test_continue_delegates_to_detached_owner_and_pause_remains_immediate(tmp_pa
     assert (root / 'pause.request').exists()
 
 
+@pytest.mark.parametrize('ceiling,value,legacy_statement', [
+    ('max_steps', '9', None), ('max_tokens', '5000', None),
+    ('max_steps', '9', ''), ('max_steps', '9', '   \n'),
+    ('max_steps', '9', '  Exact statement from an already open form.\n'),
+])
+def test_budget_form_queues_exact_limits_and_original_adjustment_text(tmp_path, ceiling, value, legacy_statement):
+    from scidiscovery.research_loop import contracts as c
+    root, key = prepare(tmp_path, enabled=False)
+    ui, cookie = session(root, key)
+    note = '  Raise this ceiling for the next bounded work.\n保留原文。\n'
+    fields = dict(form(ui, cookie, 'budget'), max_tokens='', max_seconds='', max_steps='', authorization_note=note)
+    fields[ceiling] = value
+    if legacy_statement is not None:
+        fields['authorization_statement'] = legacy_statement
+    settings = (root / 'settings.json').read_bytes()
+    # A current owner keeps the actual browser request queued at its boundary.
+    with controller._writer(root):
+        status, _, headers = post(ui, cookie, 'budget', fields)
+        assert status == 303 and headers['Location'] == '/operations'
+        operations = control.operations(root)
+        assert len(operations) == 1 and operations[0]['status'] == 'accepted'
+        amendment = operations[0]['amendment']
+        assert amendment == dict(max_tokens=5000 if ceiling == 'max_tokens' else None,
+            max_seconds=None, max_steps=9 if ceiling == 'max_steps' else None,
+            authorization_note=note, authorization_statement=legacy_statement if legacy_statement and legacy_statement.strip() else (
+                note if ceiling == 'max_steps' else None))
+        assert c.read(root / 'host-control/operations' / (operations[0]['operation_id'] + '.json'))['amendment'] == amendment
+    assert (root / 'settings.json').read_bytes() == settings
+    assert not (root / 'execution-authority').exists()
+    with pytest.raises(PermissionError, match='nonce'):
+        post(ui, cookie, 'budget', fields)
+    ui.translation.close()
+
+
+@pytest.mark.parametrize('note', ['', '   \n'])
+def test_budget_form_rejects_empty_explanation_and_keeps_one_retry_field(tmp_path, note):
+    root, key = prepare(tmp_path, enabled=False)
+    ui, cookie = session(root, key)
+    fields = dict(form(ui, cookie, 'budget'), max_tokens='', max_seconds='', max_steps='9', authorization_note=note)
+    status, page, _ = post(ui, cookie, 'budget', fields)
+    assert status == 422 and not control.operations(root)
+    retry = re.search(r'<form method="post" action="/control/budget">(.*?)</form>', page.decode(), re.S).group(1)
+    assert retry.count('name="authorization_note"') == 1 and '调整说明' in retry
+    assert 'name="authorization_statement"' not in retry and '确认调整预算' in retry
+    assert '9' in retry and 'name="csrf"' in retry and 'name="nonce"' in retry
+    ui.translation.close()
+
+
+@pytest.mark.parametrize('extra', ['unknown=value', 'authorization_note=duplicate'])
+def test_budget_form_rejects_unknown_or_duplicate_fields_before_queueing(tmp_path, extra):
+    root, key = prepare(tmp_path, enabled=False)
+    ui, cookie = session(root, key)
+    fields = dict(form(ui, cookie, 'budget'), max_tokens='', max_seconds='', max_steps='9', authorization_note='Exact bounded adjustment.')
+    with pytest.raises(ValueError, match='missing or duplicate fields'):
+        ui.post('/control/budget', host=ui.host, origin='http://' + ui.host, cookie=cookie,
+            content_type='application/x-www-form-urlencoded', body=(urlencode(fields) + '&' + extra).encode())
+    assert not control.operations(root)
+    ui.translation.close()
+
+
 def test_read_cookie_opens_only_sealed_science_and_attachment_members(tmp_path,monkeypatch):
     from test_instance_science import read
     from scidiscovery.research_loop import instance_render as render
@@ -547,7 +607,11 @@ network = false
             stage = advance.read_text()
             if stage not in advanced:
                 advanced.add(stage)
-                if stage == '2':
+                if stage == 'metered':
+                    task_sha256 = c.digest(root / 'jobs/001.json')
+                    c.write(record / 'native-intent.json', dict(task_sha256=task_sha256, prepared_at=1.0))
+                    c.write(record / 'runner-process.json', runtime.process_identity(os.getpid(), task_sha256))
+                elif stage == '2':
                     finish(root, 1, 'H', [], action='analyze', summary='First browser phase finding')
                     _, _, output = finish(root, 2, 'A', [1], summary='Second browser phase conclusion')
                     (output / 'native.jsonl').write_text(json.dumps(dict(type='item.completed', item=dict(type='agent_message', text='Second phase public output'))) + '\n')
@@ -624,6 +688,8 @@ network = false
     translation_calls = []
     def fixture_translate(service, settings, texts):
         translation_calls.append((translation_permission.exists(), list(texts)))
+        if 'Browser translation failure fixture' in texts:
+            raise ui_translation._TranslationError('timeout')
         return ['<b>译文</b> ' + text for text in texts], None
     monkeypatch.setattr(ui_translation.TranslationService, '_translate', fixture_translate)
     ui = InstanceUI(workspace, secret_file=key, workspace=True); ready = threading.Event(); servers = []; errors = []
@@ -681,7 +747,7 @@ network = false
         port = int(port_file.read_text().splitlines()[0])
         script = r'''
 import {appendFile, writeFile} from 'node:fs/promises';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 const [port, origin, transport] = process.argv.slice(1);
 const managementToken = process.env.SCID_TEST_UI_MANAGEMENT_TOKEN;
 const targets = await (await fetch('http://127.0.0.1:' + port + '/json/list')).json();
@@ -720,6 +786,15 @@ await waitFor('document.querySelector("textarea[name=task_text]") !== null && do
 if (await evaluate(`document.querySelector('[name="cfg.budget.max_tokens"]').value`) !== '') throw new Error('Missing budget was silently supplied');
 if (await evaluate(`document.querySelector('[name="task_text"]').value`) !== '') throw new Error('Workspace task was silently supplied');
 if (await evaluate(`document.body.innerText.includes('budget.max_tokens') || document.body.innerText.includes('research.public_root')`)) throw new Error('Ordinary initial screen exposes declaration keys');
+// A real missing-file response keeps the chosen path visible and its form usable.
+const missingConfig = process.env.SCID_TEST_CONFIG_PATH + '.missing.toml';
+await evaluate(`document.querySelector('.setup-tools').open=true;document.querySelector('[name="config_path"]').value=${JSON.stringify(missingConfig)};document.querySelector('form[action="/control/load-config"] button').click();true`);
+await waitFor(`document.querySelector('h1')?.textContent==='配置文件不存在' && document.querySelector('.setup-tools').open`);
+if (await evaluate(`document.querySelector('[name="config_path"]').value`) !== missingConfig) throw new Error('Missing-config failure lost chosen path');
+await screenshot('setup-error-missing-config-desktop');
+await call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});
+await noOverflow(); await screenshot('setup-error-missing-config-mobile');
+await call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
 // Import a nested declaration, then traverse both steps without changing any control.
 await evaluate(`document.querySelector('.setup-tools').open=true;document.querySelector('[name="config_path"]').value=${JSON.stringify(process.env.SCID_TEST_CONFIG_PATH)};document.querySelector('form[action="/control/load-config"] button').click();true`);
 await waitFor(`document.querySelector('.import-notice') !== null && document.querySelector('[aria-current=step]')?.dataset.setupMarker === '1'`);
@@ -729,7 +804,8 @@ await waitFor(`document.querySelector('[aria-current=step]')?.dataset.setupMarke
 await evaluate(`document.querySelector('[data-setup-go="1"]').click();true`);
 const returned = await evaluate(`JSON.stringify(Array.from(new FormData(document.getElementById('research-config-form'))).filter(([name])=>!['nonce','csrf','selection'].includes(name)))`);
 if (imported !== returned || !returned.includes('imported-worker-model') || !returned.includes('retained')) throw new Error('Imported nested controls changed across steps');
-await call('Page.navigate', {url:origin+'/new'});
+// Begin a new draft from this authenticated page so Strict cookies retain a same-site initiator.
+await evaluate(`location.assign('/new');true`);
 await waitFor(`document.querySelector('[name="task_text"]')?.value === '' && document.querySelector('[aria-current=step]')?.dataset.setupMarker === '1'`);
 // An incomplete text attempt must not leave an invalid hidden control when switching to a file.
 await evaluate(`document.querySelector('[data-setup-go="2"]').click();document.querySelector('[name="task_mode"]').value='file';document.querySelector('[name="task_mode"]').dispatchEvent(new Event('change',{bubbles:true}));
@@ -755,6 +831,7 @@ await evaluate(`document.querySelector('[data-setup-go="2"]').click();document.q
 await waitFor(`document.querySelector('.setup-notice') !== null && document.querySelector('[aria-current=step]')?.dataset.setupMarker === '2'`);
 if (await evaluate(`document.querySelector('[name="cfg.budget.max_tokens"]').value`) !== 'not-a-number') throw new Error('Validation lost invalid input');
 if (await evaluate(`document.querySelector('[name="cfg.agent.model"]').value`) !== 'browser-fixture-model') throw new Error('Validation lost model');
+await screenshot('setup-error-budget-desktop');
 await evaluate(`document.querySelector('[name="cfg.budget.max_tokens"]').value='1234';true`);
 await screenshot('setup-budget-desktop');
 await evaluate(`document.querySelector('form[action="/control/configure"] button[value="preview"]').click();true`);
@@ -777,6 +854,11 @@ await waitFor(`document.querySelector('[aria-current=step]')?.dataset.setupMarke
 await evaluate(`document.querySelector('form[action="/control/create"] button').click(); true`);
 await waitFor('location.pathname === "/instances/1/" && document.getElementById("live-hero")?.innerText.includes("未开始") && document.querySelector(\'form[action="/instances/1/control/start"]\') !== null');
 if (!(await evaluate(`document.querySelector('h1').textContent.includes('Browser direct-form research task.') && document.getElementById('live-usage').innerText.includes('1,234')`))) throw new Error('Created overview lost the selected task or budget');
+await call('Page.navigate', {url:origin+'/instances/1/progress'});
+await waitFor(`document.querySelector('[data-stream-status]')?.textContent.includes('尚无研究阶段') && document.querySelector('[data-token-scope]')?.textContent==='当前阶段 · 等待助手用量'`);
+if (!(await evaluate(`document.querySelectorAll('[data-token-details] dt').length===0`))) throw new Error('Empty research shows stale token readings');
+await call('Page.navigate', {url:origin+'/instances/1/'});
+await waitFor(`document.querySelector('form[action="/instances/1/control/start"] button') !== null`);
 await evaluate(`document.querySelector('form[action="/instances/1/control/start"] button').click(); true`);
 await waitFor('document.body.innerText.includes("已接受请求")');
 await call('Page.navigate', {url: origin + '/instances/1/nodes/1/progress?attempt=0'});
@@ -789,6 +871,8 @@ for (let index = 0; index < 60; index++) {
 }
 if (!observed.includes('已连接')) throw new Error('Public progress JavaScript did not poll: ' + observed);
 if (!observed.includes('阶段已准备，尚未开始')) throw new Error('Prepared phase lifecycle missing: ' + observed);
+if (!(await evaluate(`document.querySelector('[data-token-details]').textContent.includes('缓存命中率') && document.querySelector('[data-token-details]').textContent.includes('不可用')`))) throw new Error('Missing token telemetry was not shown explicitly');
+if (!(await evaluate(`(()=>{const card=document.querySelector('section.token-monitor'),log=document.querySelector('[data-progress]');return card && !card.closest('.stat') && !card.closest('[data-progress]') && card.parentElement===log.parentElement && Boolean(log.compareDocumentPosition(card)&Node.DOCUMENT_POSITION_FOLLOWING)})()`))) throw new Error('Token monitor must follow the primary public work log as an independent sibling card');
 await appendFile(transport, JSON.stringify({type: 'item.completed', item: {type: 'agent_message', text: 'Public browser fixture'}}) + '\n');
 let rendered = '';
 for (let index = 0; index < 60; index++) {
@@ -798,10 +882,40 @@ for (let index = 0; index < 60; index++) {
   if (rendered.includes('Public browser fixture')) break;
 }
 if (!rendered.includes('Public browser fixture')) throw new Error('Initial fixed output missing');
+// The metered attempt has actually started, so aggregate accounting includes it.
+await writeFile(process.env.SCID_TEST_ADVANCE, 'metered');
+await writeFile(join(dirname(transport), 'usage.json'), JSON.stringify({input_tokens:30,cached_input_tokens:20,output_tokens:2}));
+await writeFile(join(dirname(transport), 'usage-observation.json'), JSON.stringify({coverage:'live',context:{status:'last_reported',total_tokens:8,model_context_window:100}}));
+await waitFor(`(()=>{const rows=Object.fromEntries(Array.from(document.querySelectorAll('[data-token-details] dt'),label=>[label.textContent,label.nextElementSibling.textContent]));return rows['输入']==='30' && rows['缓存输入']==='20' && rows['非缓存输入']==='10' && rows['输出']==='2' && rows['缓存命中率']==='66.7%' && rows['最近一次上报上下文（阶段 1 / attempt 0）']?.startsWith('8 / 100 · 8.0%')})()`);
+await evaluate(`window.tokenPollSentinel='preserved';true`);
+await writeFile(join(dirname(transport), 'usage.json'), JSON.stringify({input_tokens:100,cached_input_tokens:80,output_tokens:5}));
+await writeFile(join(dirname(transport), 'usage-observation.json'), JSON.stringify({coverage:'live',context:{status:'last_reported',total_tokens:64,model_context_window:128}}));
+await waitFor(`(()=>{const rows=Object.fromEntries(Array.from(document.querySelectorAll('[data-token-details] dt'),label=>[label.textContent,label.nextElementSibling.textContent]));return rows['输入']==='100' && rows['缓存输入']==='80' && rows['非缓存输入']==='20' && rows['输出']==='5' && rows['缓存命中率']==='80.0%' && rows['最近一次上报上下文（阶段 1 / attempt 0）']?.startsWith('64 / 128 · 50.0%')})()`);
+if (!(await evaluate(`window.tokenPollSentinel==='preserved' && document.querySelector('[data-events]').textContent.includes('Public browser fixture')`))) throw new Error('Token updates reloaded the page or lost public output');
+await noOverflow(); await screenshot('token-monitor-progress-desktop');
+await call('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+await noOverflow(); await screenshot('token-monitor-progress-mobile');
+await call('Emulation.setDeviceMetricsOverride', {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+await call('Page.navigate', {url:origin+'/instances/1/'});
+await waitFor(`document.querySelector('.token-monitor')?.innerText.includes('80.0%')`);
+if (!(await evaluate(`(()=>{const ids=['live-hero','live-usage','live-activity','live-trail','live-token-monitor'];return document.querySelectorAll('.stats > .stat').length===4 && ids.every((id,index)=>!index || document.getElementById(ids[index-1]).nextElementSibling===document.getElementById(id)) && document.querySelector('#live-token-monitor > .token-monitor') && !document.querySelector('#live-usage [data-token-details]')})()`))) throw new Error('Overview token monitor must follow the primary research content');
+await noOverflow(); await screenshot('token-monitor-overview-desktop');
+await call('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+await noOverflow(); await screenshot('token-monitor-overview-mobile');
+await call('Emulation.setDeviceMetricsOverride', {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+await call('Page.navigate', {url:origin+'/instances/1/nodes/1/progress?attempt=0'});
+await waitFor(`document.querySelector('[data-events]')?.textContent.includes('Public browser fixture') && document.querySelector('[data-token-details]')?.textContent.includes('80.0%')`);
+// A permanent progress authorization failure explains recovery and never polls again.
+await evaluate(`(()=>{window.progressDeniedCalls=0;const originalFetch=window.fetch;window.fetch=(url,options)=>{if(String(url).includes('/nodes/1/events')){window.progressDeniedCalls++;return Promise.resolve(new Response(JSON.stringify({error:{code:'browser_session_invalid',title:'浏览会话已失效',cause:'进度会话已过期。',hint:'请使用本次 management_url 重新打开。',reference:'progress-fixture-ref'}}),{status:403,headers:{'Content-Type':'application/json'}}))}return originalFetch(url,options)};return true})()`);
+await waitFor(`document.querySelector('[data-stream-status]')?.textContent.includes('management_url') && document.querySelector('[data-stream-status]').textContent.includes('progress-fixture-ref')`);
+await new Promise(resolve=>setTimeout(resolve,2300));
+if (!(await evaluate(`window.progressDeniedCalls===1 && document.querySelector('[data-events]').textContent.includes('Public browser fixture')`))) throw new Error('Expired progress kept polling or lost rendered output');
+await screenshot('reading-error-progress-session-expired');
 await call('Page.navigate', {url:origin+'/instances/1/progress'});
 await waitFor(`document.querySelector('[data-progress-heading]')?.textContent.includes('第 1 阶段') && document.querySelector('[data-events]')?.textContent.includes('Public browser fixture')`);
 await writeFile(process.env.SCID_TEST_ADVANCE, '2');
 await waitFor(`document.querySelector('[data-progress-heading]')?.textContent.includes('第 2 阶段') && document.querySelector('[data-events]')?.textContent.includes('Second phase public output')`);
+if (!(await evaluate(`document.querySelector('[data-token-monitor] [data-token-scope]').textContent.includes('第 2 阶段 · attempt 0') && !document.querySelector('[data-progress] [data-token-details]')`))) throw new Error('Separate token card did not follow the latest phase');
 if ((await evaluate('location.pathname')) !== '/instances/1/progress') throw new Error('Following output navigated away');
 await screenshot('live-follow-current-node');
 await call('Page.navigate', {url:origin+'/instances/1/nodes/1/progress?attempt=0'});
@@ -815,6 +929,7 @@ await evaluate(`document.querySelector('details.more-actions > summary').click()
 if (await evaluate(`document.querySelector('details.budget-adjustment').open`)) throw new Error('Opening more actions expanded the budget form');
 await evaluate(`document.querySelector('details.budget-adjustment > summary').click();true`);
 if (!(await evaluate(`document.querySelector('details.budget-adjustment').open && document.querySelector('#budget [name="max_tokens"]').getClientRects().length>0`))) throw new Error('Budget summary did not reveal its form');
+if (!(await evaluate(`document.querySelectorAll('#budget textarea').length===1 && document.querySelector('#budget [name="authorization_note"]').closest('label').innerText.includes('调整说明') && !document.querySelector('#budget [name="authorization_statement"]') && document.querySelector('#budget button').textContent==='确认调整预算'`))) throw new Error('Budget form must use one adjustment explanation and explicit submit confirmation');
 await evaluate(`document.querySelector('details.budget-adjustment').open=false;document.querySelector('details.more-actions').open=false;true`);
 await call('Page.navigate', {url:origin+'/instances/1/#budget'});
 await waitFor(`document.querySelector('details.more-actions').open && document.querySelector('details.budget-adjustment').open && document.querySelector('#budget [name="max_tokens"]').getClientRects().length>0`);
@@ -931,11 +1046,29 @@ await call('Page.navigate', {url:origin+'/instances/1/reading'});
 await waitFor(`document.querySelector('[name="target_language"]')?.value==='ja'`);
 await evaluate(`document.querySelector('[name="target_language"]').value='zh-CN';document.querySelector('form[action$="/translation/configure"]').requestSubmit();true`);
 await waitFor(`document.querySelector('[name="target_language"]')?.value==='zh-CN' && document.querySelector('[data-translation-status]')?.textContent.includes('zh-CN')`);
+await evaluate(`document.querySelector('[name="timeout_seconds"]').value='301';document.querySelector('form[action$="/translation/configure"]').requestSubmit();true`);
+await waitFor(`document.querySelector('h1')?.textContent==='翻译超时设置无效' && document.querySelector('[name="timeout_seconds"]').closest('details').open`);
+if (await evaluate(`document.querySelector('[name="target_language"]').value`) !== 'zh-CN') throw new Error('Translation failure lost reading language');
+await screenshot('reading-error-timeout-desktop');
+await evaluate(`document.querySelector('[name="timeout_seconds"]').value='120';document.querySelector('form[action$="/translation/configure"]').requestSubmit();true`);
+await waitFor(`document.querySelector('h1')?.textContent==='阅读与翻译'`);
+await evaluate(`(()=>{const node=document.createElement('p');node.id='translation-failure-fixture';node.dataset.translationSource=JSON.stringify('Browser translation failure fixture');node.textContent='Browser translation failure fixture';document.querySelector('main').append(node)})();true`);
+await waitFor(`document.querySelector('#translation-failure-fixture')?.dataset.translationStatus==='missing' && !document.querySelector('[data-translation-start]').disabled`);
+await evaluate(`document.querySelector('[data-translation-start]').click();true`);
+await waitFor(`document.querySelector('#translation-failure-fixture')?.dataset.translationStatus==='failed' && document.querySelector('[data-translation-status]').textContent.includes('超时')`);
+if (await evaluate(`document.querySelector('#translation-failure-fixture').textContent`) !== 'Browser translation failure fixture') throw new Error('Failed translation replaced original source');
+if (!(await evaluate(`document.querySelector('[data-translation-status]').textContent.includes('诊断编号')`))) throw new Error('Background translation failure lost diagnostic reference');
+await screenshot('reading-error-background-translation-desktop');
 await call('Page.navigate', {url:origin+'/instances/1/results'});
 await waitFor(`document.querySelector('.mechanism-card h3')?.textContent.startsWith('<b>译文</b>')`);
 
 await call('Page.navigate', {url:origin+'/instances/1/'});
 await waitFor(`document.getElementById('live-hero')?.innerText.includes('本次控制请求已停止推进') && document.querySelector('[data-live-url]')?.dataset.state==='connected'`);
+await evaluate(`(()=>{const note=document.querySelector('[name="authorization_note"]');note.value='Keep this expired-session draft';window.liveAuthChecks=0;const originalFetch=window.fetch;window.fetch=(url,options)=>{if(String(url).endsWith('/session')){window.liveAuthChecks++;window.checkedSessionURL=String(url);return Promise.resolve(new Response(JSON.stringify({error:{code:'browser_session_invalid',title:'浏览会话已失效',cause:'本地会话已过期。',hint:'请使用本次 management_url 重新打开。',reference:'live-fixture-ref'}}),{status:403,headers:{'Content-Type':'application/json'}}))}return originalFetch(url,options)};source.dispatchEvent(new Event('error'));return true})()`);
+await waitFor(`document.querySelector('[data-live-url]')?.dataset.state==='expired' && document.querySelector('[data-live-url]').textContent.includes('management_url') && document.querySelector('[data-live-url]').textContent.includes('live-fixture-ref')`);
+await new Promise(resolve=>setTimeout(resolve,1700));
+if (!(await evaluate(`source===null && window.liveAuthChecks===1 && window.checkedSessionURL==='/instances/1/session' && document.querySelector('[name="authorization_note"]').value==='Keep this expired-session draft'`))) throw new Error('Expired SSE retained reconnect or lost draft/mounted session route');
+await screenshot('reading-error-live-session-expired');
 ws.close();
 if (rendered.includes('{\"type\"')) throw new Error('Raw JSON appeared in the normal progress panel');
 if (!rendered.includes('Public browser fixture')) throw new Error('Public event did not render after append: ' + rendered);
@@ -947,7 +1080,7 @@ console.log(rendered);
                 SCID_TEST_INSTANCE_ROOT=str(root), SCID_TEST_PUBLIC_ROOT=str(workspace / 'public'),
                 SCID_TEST_CONFIG_PATH=str(config), SCID_TEST_LOG_DIR=str(log_dir), SCID_TEST_ADVANCE=str(advance),
                 SCID_TEST_TRANSLATION_CLICK=str(translation_permission)),
-            capture_output=True, text=True, timeout=45)
+            capture_output=True, text=True, timeout=60)
         assert checked.returncode == 0, checked.stderr
         assert '已连接' in checked.stdout
         assert 'Public browser fixture' in checked.stdout

@@ -9,6 +9,15 @@ plugin; it does not contact or qualify a remote solver. See the
 [CLI guide](../../docs/ROOTLESS_CLI.zh-CN.md) and
 [transport contract](../../docs/tcad_transport_contract.md) for configuration and calls.
 
+Select `tcad_execution:tcad` with an explicit `config_file`; inline TCAD
+configuration and implicit deployment defaults are rejected. The plugin file is
+a JSON/TOML object with `transport = "command"` and `command_config_path`, or
+`transport = "socket"` and `socket_path`. Local paths resolve relative to their
+own configuration file. Preparation checks command/SSH schemas, referenced local
+files and optional `implementation_compilation.capability_snapshot_path` without
+contacting a backend or creating adapter state. Settings freeze with the instance;
+editing the top-level plugin file does not amend an existing instance.
+
 This plugin also retains reusable schemas, project materializers, parsers and
 Operation declarations. These are [library contracts](../../docs/PLUGIN_RUNTIME_API.md);
 they do not provide a Run/Artifact application or an Operation scheduler.

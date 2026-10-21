@@ -67,7 +67,9 @@ FIELDS = [
     Field('budget.correction.review_after', '补正复核阈值', 'integer'),
     Field('budget.correction.pause_after', '补正暂停阈值', 'integer'),
     Field('executor.mode', '实验执行归属', choices=('local', 'external')),
-    Field('executor.config', '执行器及插件配置', 'table'),
+    Field('executor.config.executor', '实验执行插件', placeholder='plugin:binding'),
+    Field('executor.config.config_file', '插件配置文件', placeholder='./plugin.toml'),
+    Field('executor.config.configuration', '插件内联配置（仅支持此方式的插件）', 'table'),
     Field('executor.resource_policy', '累计实验资源策略', 'table'),
     Field('delivery', '交付策略及 adapter 配置', 'table'),
     *[Field(f'policies.{key}', label, 'boolean') for key, label in [
@@ -638,4 +640,5 @@ def export_toml(draft):
         if argv and '/' in argv[0]:
             argv[0] = str(research_config._path(argv[0],base,'launcher_argv'))
     path_at(document.get('ui', {}), 'approval_secret_file')
+    path_at(_get(document, 'executor.config', {}), 'config_file')
     return '\n'.join(json.dumps(k,ensure_ascii=False)+' = '+value(v) for k,v in document.items())+'\n'

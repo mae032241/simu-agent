@@ -139,7 +139,7 @@ def test_workspace_structured_form_preview_create_and_open_exact_instance(tmp_pa
         assert fields['cfg.budget.max_seconds'] == '' and fields['cfg.budget.max_steps'] == ''
         assert b'config_text' not in page and b'action="/control/create"' not in page
         assert request(connection, 'POST', '/control/create', cookie=cookie,
-            fields=dict(form(page, 'configure'), selection='unselected'), origin=origin)[0] == 403
+            fields=dict(form(page, 'configure'), selection='unselected'), origin=origin)[0] == 422
         _, page, _ = request(connection, 'GET', '/new', cookie=cookie)
         fields = controls(page)
         fields.update({'task_text': 'Research a new task directly from the form.',
@@ -151,7 +151,7 @@ def test_workspace_structured_form_preview_create_and_open_exact_instance(tmp_pa
             fields=dict(fields, csrf='forged'), origin=origin)[0] == 403
         status, invalid, _ = request(connection, 'POST', '/control/configure', cookie=cookie,
             fields=dict(fields, **{'cfg.budget.max_tokens': 'not-a-number'}), origin=origin)
-        assert status == 200
+        assert status == 422
         retained = controls(invalid)
         assert retained['task_text'] == fields['task_text'] and retained['cfg.agent.model'] == 'form-model'
         assert retained['cfg.research.root'] == str(workspace / 'new-instance')
@@ -199,7 +199,7 @@ def test_optional_external_config_import_edit_save_and_changed_source_reconfirm(
         cookie = login(connection, url); origin = 'http://' + url.netloc
         _, page, _ = request(connection, 'GET', '/new', cookie=cookie)
         assert request(connection, 'POST', '/control/load-config', cookie=cookie,
-            fields=dict(form(page, 'load-config'), config_path=str(key)), origin=origin)[0] == 403
+            fields=dict(form(page, 'load-config'), config_path=str(key)), origin=origin)[0] == 422
         _, page, _ = request(connection, 'GET', '/new', cookie=cookie)
         status, page, _ = request(connection, 'POST', '/control/load-config', cookie=cookie,
             fields=dict(form(page, 'load-config'), config_path=str(config)), origin=origin)

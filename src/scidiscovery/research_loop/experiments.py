@@ -176,15 +176,47 @@ HOST_CONFIGURATION_FIELDS = frozenset({'scope','record_dir','native_attempt','ad
     'execution_host_services', 'frozen_execution_interface', 'worker_view_version', 'host_launch_implementation'})
 
 
-def operator_configuration(value):
+def operator_configuration(value, base=None):
     """Freeze public operator settings without constructing an adapter or fake task."""
-    if not isinstance(value,dict) or set(value)!={'executor','configuration'} or not isinstance(value['configuration'],dict):
-        raise ValueError('Execution config requires exactly executor and configuration objects')
-    if HOST_CONFIGURATION_FIELDS.intersection(value['configuration']):
-        raise ValueError('Operator execution configuration cannot supply host identity or admission fields')
+    from scidiscovery.plugin_configuration import (PluginConfigurationError, configuration_path, read_configuration)
+    if not isinstance(value,dict) or set(value) not in ({'executor','configuration'}, {'executor','config_file'}):
+        raise PluginConfigurationError('plugin_config_selection_invalid', '请选择执行插件及一种配置来源。',
+            field_path='executor.config.executor', hint='填写 plugin:binding 执行器及 config_file，或插件支持的内联 configuration。')
+    try:
+        declared, binding = registration(value['executor'])
+    except (ValueError, UnsupportedExecution):
+        candidate = value.get('executor')
+        plugin_id = candidate.partition(':')[0] if isinstance(candidate,str) and ID.fullmatch(candidate.partition(':')[0]) else None
+        raise PluginConfigurationError('plugin_executor_unavailable', '执行插件不可用或执行器标识无效。',
+            field_path='executor.config.executor', hint='请检查 plugin:binding 标识并安装对应插件。', plugin_id=plugin_id) from None
+    source = None
+    if 'config_file' in value:
+        source = configuration_path(value['config_file'], base=base, plugin_id=declared.plugin_id)
+        configuration = read_configuration(source, plugin_id=declared.plugin_id)
+    else:
+        if declared.factory.requires_config_file:
+            raise PluginConfigurationError('plugin_config_file_required', '所选执行插件要求独立配置文件。',
+                hint='请填写 config_file，指向插件的 JSON 或 TOML 配置文件。', plugin_id=declared.plugin_id)
+        configuration = value['configuration']
+    if not isinstance(configuration,dict) or HOST_CONFIGURATION_FIELDS.intersection(configuration):
+        raise PluginConfigurationError('plugin_config_fields_invalid', 'Operator execution configuration must be an object and cannot supply host identity or admission fields.',
+            hint='请移除宿主身份或执行授权字段。', plugin_id=declared.plugin_id)
+    if declared.factory.configure is not None:
+        try:
+            configuration = declared.factory.configure(configuration, source, binding=binding)
+        except PluginConfigurationError:
+            raise
+        except (OSError, ValueError, TypeError):
+            raise PluginConfigurationError('plugin_config_invalid', '插件配置未通过本地检查。',
+                hint='请依据插件文档修正配置字段和引用文件。', plugin_id=declared.plugin_id) from None
+    if not isinstance(configuration,dict) or HOST_CONFIGURATION_FIELDS.intersection(configuration):
+        raise ValueError('Plugin configuration callback returned invalid operator settings')
     # Round-trip also rejects non-JSON/nonfinite settings before creating an instance.
-    body=json.loads(encoded(value))
-    registration(body['executor'])
+    try:
+        body=json.loads(encoded(dict(executor=value['executor'],configuration=configuration)))
+    except (ValueError, TypeError):
+        raise PluginConfigurationError('plugin_config_invalid', '插件配置包含不支持的值。',
+            hint='请使用有限数字及可序列化的 JSON 配置值。', plugin_id=declared.plugin_id) from None
     return body
 
 
@@ -505,6 +537,11 @@ def configure(root,step,executor,config,output):
             raise IntegrityError('Host execution configuration differs from the frozen operator selection')
         config=expected
         if 'implementation' in selected:implementation=dict(registered_implementation=selected['implementation'])
+    elif isinstance(config,dict) and set(config)=={'config_file'}:
+        config=operator_configuration(dict(executor=executor,config_file=config['config_file']))['configuration']
+    # Other mappings are trusted launcher settings, which may already contain
+    # host bindings. Rebind them to this accepted task below; operator settings
+    # are checked separately before preparation or explicit file selection.
     admission=budget.review_configuration(root,job)
     from .protocol import stage_scope
     from . import experiment_client

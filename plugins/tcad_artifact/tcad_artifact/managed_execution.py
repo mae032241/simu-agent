@@ -363,10 +363,23 @@ class TCADManagedExecution:
 
     def _original_interface(self):
         selected = self.config.get('execution_interface')
+        required = {'version', 'executor', 'observation_version', 'terminal_evidence',
+            'result_protocol', 'config_sha256', 'capabilities'}
         if (not isinstance(selected, dict) or type(selected.get('version')) is not int
-                or selected['version'] != e.VERSION or not isinstance(selected.get('code'), list)
-                or not selected['code']):
+                or selected['version'] != e.VERSION or not required.issubset(selected)
+                or selected.get('executor') != 'tcad_execution:tcad'
+                or type(selected.get('observation_version')) is not int
+                or selected['observation_version'] != e.OBSERVATION_VERSION
+                or selected.get('terminal_evidence') != self.terminal_evidence_kind
+                or selected.get('result_protocol') != self.result_protocol
+                or not isinstance(selected.get('config_sha256'), str)
+                or not re.fullmatch('[0-9a-f]{64}', selected['config_sha256'])
+                or not isinstance(selected.get('capabilities'), dict)
+                or any(type(value) is not bool for value in selected['capabilities'].values())
+                or selected['capabilities'] != vars(self.lifecycle_capabilities())):
             raise e.IntegrityError('TCAD acceptance requires the complete original host interface; discovery is insufficient')
+        # Core load verifies the frozen configuration and lifecycle; source proofs
+        # are installation metadata, not evidence of a complete host interface.
         return selected
 
     def dispatch_lease(self, accepted):
@@ -791,6 +804,103 @@ class TCADManagedExecution:
             'authorization_request', 'review_url', 'resource_accounting') if key in result}
 
 
+def configure_managed_execution(config, source, *, binding):
+    """Pure local preflight: parse declarations without building or contacting adapters."""
+    from scidiscovery.plugin_configuration import PluginConfigurationError
+    from .command_adapter import (CommandAdapterConfig, read_command_configuration,
+        validate_command_configuration, bundled_ssh_configuration)
+    from .ssh_transport import SSHTCADTransportConfig, read_transport_config
+    from pydantic import ValidationError
+
+    def invalid(field, hint):
+        return PluginConfigurationError('tcad_configuration_invalid', 'TCAD 插件配置不完整或无效。',
+            hint=f'请检查插件配置中的 {field}；{hint}', plugin_id='tcad_execution')
+
+    def schema_field(error, model, fallback):
+        while error is not None:
+            if isinstance(error, ValidationError):
+                for detail in error.errors(include_input=False, include_url=False):
+                    location = detail.get('loc', ())
+                    if location and location[0] in model.model_fields:
+                        return str(location[0])
+            error = error.__cause__
+        return fallback
+
+    if binding != 'tcad':
+        raise PluginConfigurationError('plugin_binding_invalid', 'TCAD 执行器绑定无效。',
+            field_path='executor.config.executor', hint='请使用 tcad_execution:tcad。', plugin_id='tcad_execution')
+    if source is None:
+        raise invalid('config_file', 'TCAD 必须使用独立 JSON 或 TOML 配置文件。')
+    body = dict(config)
+    allowed = set(TCADRuntimeConfig.model_fields) | {'max_seconds', 'implementation_compilation'}
+    if set(body) - allowed:
+        raise invalid('配置字段', '请仅保留 TCAD 支持的设置。')
+    base = source.parent
+    for field in ('socket_path', 'command_config_path'):
+        if isinstance(body.get(field), str):
+            if not body[field].strip():
+                raise invalid(field, '请填写非空路径。')
+            body[field] = os.path.abspath(base / Path(body[field]).expanduser())
+    try:
+        transport = TCADRuntimeConfig.model_validate_json(json.dumps({
+            key: body[key] for key in TCADRuntimeConfig.model_fields if key in body}), strict=True)
+    except (ValueError, TypeError) as error:
+        raise invalid(schema_field(error, TCADRuntimeConfig, 'transport/socket_path/command_config_path'),
+            '请选择 socket 或 command，并仅提供该传输需要的路径。') from None
+    if 'max_seconds' in body and (type(body['max_seconds']) not in (int,float)
+            or not 0 < body['max_seconds'] < float('inf')):
+        raise invalid('max_seconds', '请填写有限正数。')
+    if transport.command_config_path is not None:
+        try:
+            command = read_command_configuration(transport.command_config_path)
+            executable = Path(command.executable)
+            if not executable.is_file() or not os.access(executable, os.X_OK):
+                raise ValueError()
+        except (OSError, ValueError, TypeError) as error:
+            raise invalid('command_config_path → ' + schema_field(error, CommandAdapterConfig, '命令配置文件'),
+                '请确认命令配置文件存在、可读、权限安全，且 executable 可执行。') from None
+        try:
+            validate_command_configuration(command)
+            nested = bundled_ssh_configuration(command)
+        except (OSError, ValueError, TypeError) as error:
+            raise invalid('command_config_path → SSH.' + schema_field(error, SSHTCADTransportConfig, 'arguments.--config'),
+                '请修正内层 SSH 配置文件路径、读取权限或配置格式。') from None
+        if nested is not None:
+            ssh = read_transport_config(nested)
+            for field in ('ssh_executable', 'identity_file', 'known_hosts_file'):
+                value = getattr(ssh, field)
+                if value is not None and (not Path(value).is_file() or not os.access(value, os.R_OK)):
+                    raise invalid('command_config_path → SSH.' + field,
+                        '请确认引用的本地文件存在且可读取。')
+            if not os.access(ssh.ssh_executable, os.X_OK):
+                raise invalid('command_config_path → SSH.ssh_executable', '请选择可执行的 SSH 程序。')
+            if ssh.destination_resolver and (not Path(ssh.destination_resolver[0]).is_file()
+                    or not os.access(ssh.destination_resolver[0], os.X_OK)):
+                raise invalid('command_config_path → SSH.destination_resolver', '请选择可执行的本地解析程序。')
+    if 'implementation_compilation' in body:
+        try:
+            compilation = dict(body['implementation_compilation'])
+            if isinstance(compilation.get('capability_snapshot_path'), str):
+                if not compilation['capability_snapshot_path'].strip():
+                    raise ValueError()
+                compilation['capability_snapshot_path'] = os.path.abspath(base / Path(
+                    compilation['capability_snapshot_path']).expanduser())
+            compilation = TCADCompilationConfig.model_validate_json(json.dumps(compilation), strict=True)
+            snapshot_path = Path(compilation.capability_snapshot_path)
+            if snapshot_path.is_symlink() or not snapshot_path.is_file():
+                raise ValueError()
+            with snapshot_path.open('rb') as stream:
+                snapshot = stream.read(256_001)
+            if len(snapshot) > 256_000:
+                raise ValueError()
+            SolverCapabilitySnapshot.model_validate_json(snapshot, strict=True)
+        except (OSError, ValueError, TypeError):
+            raise invalid('implementation_compilation.capability_snapshot_path',
+                '请提供可读取且符合求解器能力 schema 的快照文件。') from None
+        body['implementation_compilation'] = compilation.model_dump(mode='json')
+    return body
+
+
 def build_managed_runtime(context):
     if context.mode != 'local_worker':
         raise ValueError('TCAD managed registration requires the existing local_worker factory mode')
@@ -814,5 +924,6 @@ def build_managed_runtime(context):
         operation_context=getattr(services, 'operation_context', None))})
 
 
-REGISTRATION = ExecutionInterfaceRegistration('tcad_execution', '1', RuntimePluginFactory(build_managed_runtime),
+REGISTRATION = ExecutionInterfaceRegistration('tcad_execution', '1', RuntimePluginFactory(build_managed_runtime,
+    configure=configure_managed_execution, requires_config_file=True),
     scientific_outputs=TCADManagedExecution.scientific_outputs)

@@ -398,7 +398,8 @@ def test_actual_native_launch_rechecks_frozen_settings(instance, monkeypatch):
 
 
 @pytest.mark.process_e2e
-def test_running_session_tokens_project_before_terminal_without_double_count(instance):
+@pytest.mark.parametrize('history_entries', [0, 600], ids=['empty-home', 'crowded-home'])
+def test_running_session_tokens_project_before_terminal_without_double_count(instance, history_entries):
     import time
     settings = contracts.read(instance / 'settings.json')
     script = Path(settings['native_launcher_argv'][1])
@@ -408,18 +409,25 @@ thread='native-'+role
 home=pathlib.Path(os.environ['THIN_HWA_NATIVE_HOME'])
 session=home/'sessions'/('rollout-'+thread+'.jsonl')
 session.parent.mkdir(parents=True,exist_ok=True)
+for index in range(HISTORY_ENTRIES):
+    (session.parent/('rollout-history-%04d.jsonl'%index)).write_text('')
 session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n')
 print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
 with session.open('a') as log:
-    log.write(json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':30,'cached_input_tokens':20,'output_tokens':2}}}})+'\\n')
+    log.write(json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':30,'cached_input_tokens':20,'output_tokens':2},'last_token_usage':{'total_tokens':22},'model_context_window':128}}})+'\\n')
     log.flush()
 if role == 'H':
     (work/'work/tokens-written').write_text(str(time.monotonic()))
     until=time.monotonic()+15
     while not (work/'work/release').exists() and time.monotonic()<until:time.sleep(.05)
 with session.open('a') as log:
-    log.write(json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':100,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
+    log.write(json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':100,'cached_input_tokens':80,'output_tokens':5},'last_token_usage':{'total_tokens':85},'model_context_window':128}}})+'\\n')
+    log.flush()
+if role == 'H':
+    until=time.monotonic()+15
+    while not (work/'work/finish').exists() and time.monotonic()<until:time.sleep(.05)
 '''
+    streaming = streaming.replace('HISTORY_ENTRIES', str(history_entries))
     script.write_text(script.read_text().replace(original, streaming))
     env = {**os.environ, 'PYTHONPATH': str(Path(__file__).parents[2] / 'src')}
     contracts.build_job(instance, 1, 'H', [])
@@ -442,12 +450,28 @@ with session.open('a') as log:
             pytest.fail('running token projection was not published within 10 seconds')
         assert process.poll() is None
         assert time.monotonic() - float((work / 'work/tokens-written').read_text()) < 5
-        assert contracts.read(record / 'usage.json')['input_tokens'] == 30
+        assert contracts.read(record / 'usage.json') == dict(input_tokens=30, cached_input_tokens=20, output_tokens=2)
+        assert native.usage(instance)['observed_tokens'] == 32
         assert observation['tokens']['output_tokens'] == 2
+        assert observation['context']['total_tokens'] == 22
+        assert observation['context']['model_context_window'] == 128
         assert observation['unreported_usage']
         assert not (record / 'native-outcome.json').exists()
+        (work / 'work/release').touch()
+        until = time.monotonic() + 10
+        while time.monotonic() < until:
+            if contracts.read(record / 'usage.json')['input_tokens'] == 100:
+                break
+            time.sleep(.05)
+        else:
+            pytest.fail('a second running token projection was not published within 10 seconds')
+        assert process.poll() is None
+        assert not (record / 'native-outcome.json').exists()
+        assert contracts.read(record / 'usage.json') == dict(input_tokens=100, cached_input_tokens=80, output_tokens=5)
+        assert native.usage(instance)['observed_tokens'] == 105
     finally:
         (work / 'work/release').touch()
+        (work / 'work/finish').touch()
         stdout, stderr = process.communicate(timeout=20)
     assert process.returncode == 0, stderr + stdout
     result = json.loads(stdout)

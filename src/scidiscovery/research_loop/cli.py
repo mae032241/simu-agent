@@ -7,6 +7,7 @@ import os
 import tempfile
 from pathlib import Path
 import sys
+from scidiscovery.plugin_configuration import read_execution_selection
 
 from . import budget, contracts, controller, search, research_config, instance_control
 from .instance_control import status, request_pause, continue_instance
@@ -30,7 +31,7 @@ def main(argv=None):
     prepare.add_argument('--native-options-json', help='Explicit inline backend permission/options JSON; omitted uses the same frozen defaults as TOML')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
     prepare.add_argument('--experiment-mode', choices=['local', 'external'], help='Host-configured W execution (local) or launcher-owned execution (external); standard codex defaults to local, custom launchers to external')
-    prepare.add_argument('--execution-config',type=Path,help='Public executor/configuration JSON for registered host-configured execution; no credentials or host identity fields; conflicts with external mode')
+    prepare.add_argument('--execution-config',type=Path,help='JSON/TOML executor selection with config_file or supported inline configuration; relative config_file uses this file directory; conflicts with external mode')
     prepare.add_argument('--search-policy', type=Path, help='Frozen W time/token targets, hard requested-repair count and optional positive initial_calls per mechanism')
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E soft time/token targets; no delivery guarantee')
@@ -233,7 +234,7 @@ def main(argv=None):
                     service_tier=args.service_tier, user_updates=args.user_update,
                     role_profiles=role_profiles,
                     experiment_mode=args.experiment_mode,
-                    execution_config=contracts.read(contracts.regular(args.execution_config)) if args.execution_config is not None else None,
+                    execution_config=read_execution_selection(args.execution_config) if args.execution_config is not None else None,
                     source_restrictions=contracts.read(contracts.regular(args.source_restrictions)) if args.source_restrictions is not None else None,
                     formal_review_policy=dict(version=1) if args.enable_formal_review else None,
                     execution_authority_policy=dict(version=1) if args.enable_execution_authority else None,

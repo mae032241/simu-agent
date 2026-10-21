@@ -97,6 +97,21 @@ def stats(usage):
     return Safe('<div class="stats">' + ''.join(stat(usage[key]) for key in ('tokens', 'time', 'steps', 'candidates')) + '</div>')
 
 
+def token_monitor(rows=None, *, scope='当前阶段 · 本次助手用量', live=False):
+    """A separate monitoring card; the live client preserves the same dt/dd pairs."""
+    body = '<section class="token-monitor"' + (' data-token-monitor' if live else '') + '><header><h2>Token 监控</h2><p class="token-scope" data-token-scope>' + esc(scope) + '</p></header>'
+    body += '<div data-token-details><dl class="token-metrics">'
+    for row in rows or []:
+        label = row['label']
+        cls = 'token-note' if label in {'计量状态', '观测限制'} else ('token-feature' if label == '缓存命中率' or label.startswith('最近一次上报上下文') else 'token-count')
+        main, separator, report = str(row['value']).partition('；') if cls != 'token-note' else (str(row['value']), '', '')
+        body += '<div class="' + cls + '"><dt>' + esc(label) + '</dt><dd' + (' class="token-unavailable"' if main.startswith('不可用') else '') + '>' + esc(main)
+        if separator:
+            body += '<span class="token-report">' + esc(report) + '</span>'
+        body += '</dd></div>'
+    return Safe(body + '</dl></div></section>')
+
+
 def facts(rows):
     if not rows:
         return Safe('')

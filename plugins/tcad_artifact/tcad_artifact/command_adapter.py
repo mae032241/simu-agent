@@ -74,6 +74,31 @@ def validate_command_configuration(config: CommandAdapterConfig) -> None:
     read_transport_config(path)
 
 
+def read_command_configuration(path: Path | str) -> CommandAdapterConfig:
+    """Parse local settings and resolve this plugin's declared file references."""
+    from scidiscovery.plugin_configuration import read_configuration
+    source = Path(path).expanduser().absolute()
+    metadata = os.lstat(source)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError('transport configuration must be a regular file')
+    if stat.S_IMODE(metadata.st_mode) & 0o022:
+        raise ValueError('transport configuration must not be group/world writable')
+    body = read_configuration(source)
+    if isinstance(body.get('executable'), str):
+        body['executable'] = str((source.parent / Path(body['executable']).expanduser()).resolve())
+    arguments = body.get('arguments', [])
+    if isinstance(arguments, list) and all(isinstance(arg, str) for arg in arguments):
+        offset = 2 if arguments[:2] == ['-m', 'tcad_artifact.ssh_transport'] else 0
+        bundled = offset == 2 or Path(body.get('executable', '')).name == 'scidiscovery-tcad-transport'
+        if bundled:
+            args = arguments[offset:]
+            if len(args) == 2 and args[0] == '--config':
+                arguments[offset+1] = os.path.abspath(source.parent / Path(args[1]).expanduser())
+            elif len(args) == 1 and args[0].startswith('--config='):
+                arguments[offset] = '--config=' + os.path.abspath(source.parent / Path(args[0].split('=',1)[1]).expanduser())
+    return CommandAdapterConfig.model_validate_json(json.dumps(body), strict=True)
+
+
 class CommandTCADExecutorAdapter:
     """Invoke one bounded external operation for each execution transition."""
 
@@ -136,15 +161,7 @@ class CommandTCADExecutorAdapter:
         *,
         local_result_root: Path | str,
     ) -> CommandTCADExecutorAdapter:
-        source = Path(path).expanduser().absolute()
-        metadata = os.lstat(source)
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("transport configuration must be a regular file")
-        if stat.S_IMODE(metadata.st_mode) & 0o022:
-            raise ValueError("transport configuration must not be group/world writable")
-        config = CommandAdapterConfig.model_validate_json(
-            source.read_bytes(), strict=True
-        )
+        config = read_command_configuration(path)
         return cls(config, local_result_root=local_result_root)
 
     def prepare_with_artifacts(self, payload, *, artifacts, **options):

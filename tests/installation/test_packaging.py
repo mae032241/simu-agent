@@ -18,8 +18,12 @@ from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import scidiscovery
+from scidiscovery import plugin_configuration
+from scidiscovery.research_loop import ui_errors
 from PIL import Image
 import jsonschema
 import pydantic
@@ -27,7 +31,7 @@ import cryptography
 
 prefix = Path(sys.prefix).resolve()
 assert "include-system-site-packages = false" in (prefix / "pyvenv.cfg").read_text()
-for module in (scidiscovery, Image, jsonschema, pydantic, cryptography):
+for module in (scidiscovery, plugin_configuration, ui_errors, Image, jsonschema, pydantic, cryptography):
     assert Path(module.__file__).resolve().is_relative_to(prefix), module.__file__
 package = distribution("scidiscovery")
 assert package.version
@@ -43,7 +47,10 @@ for script, target in {
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0 and "usage:" in result.stdout, result.stderr
 execution = entry_points().select(group="scidiscovery.execution_interfaces")
-assert sorted(entry.name for entry in execution) == ["cov_execution", "local_execution"]
+execution_names = {"cov_execution", "local_execution"}
+if cohort == "tcad":
+    execution_names.add("tcad_execution")
+assert sorted(entry.name for entry in execution) == sorted(execution_names)
 for entry in execution:
     assert entry.load() is not None
 plugin_names = {"builtin", "general_science"}
@@ -98,4 +105,37 @@ else:
     assert resources.files("tcad_artifact").joinpath("roles/parameter_evidence_extractor.md").read_bytes()
     assert tuple((prefix / "share/tcad-artifact/systemd").glob("*.in"))
     assert tuple((prefix / "share/tcad-artifact/config").glob("*.json"))
+    from scidiscovery.research_loop import experiments
+    from tcad_artifact import managed_execution
+    declared, binding = experiments.registration("tcad_execution:tcad")
+    assert declared is managed_execution.REGISTRATION and binding == "tcad"
+    assert declared.factory.requires_config_file is True
+    assert callable(declared.factory.configure)
+    # Installed configuration admission uses real discovery but no transport.
+    with TemporaryDirectory() as scratch, patch.object(managed_execution, "build_adapter",
+            side_effect=AssertionError("configuration admission constructed an adapter")):
+        directory = Path(scratch)
+        expected = dict(executor="tcad_execution:tcad", configuration=dict(
+            transport="socket", socket_path=str(directory / "unopened.sock")))
+        for extension, text in (("json", '{"transport":"socket","socket_path":"./unopened.sock"}'),
+                ("toml", 'transport = "socket"\nsocket_path = "./unopened.sock"\n')):
+            source = directory / ("tcad." + extension)
+            source.write_text(text, encoding="utf-8")
+            selected = experiments.operator_configuration(
+                dict(executor="tcad_execution:tcad", config_file=source.name), base=directory)
+            assert selected == expected
+        try:
+            experiments.operator_configuration(expected)
+        except plugin_configuration.PluginConfigurationError as error:
+            assert error.code == "plugin_config_file_required"
+        else:
+            raise AssertionError("installed TCAD admitted inline configuration")
+        source.write_text('transport = "invalid"\n', encoding="utf-8")
+        try:
+            experiments.operator_configuration(
+                dict(executor="tcad_execution:tcad", config_file=str(source)))
+        except plugin_configuration.PluginConfigurationError as error:
+            assert error.code == "tcad_configuration_invalid"
+        else:
+            raise AssertionError("installed TCAD bypassed configuration validation")
 ''')

@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import stat
 
-from . import backends, contracts, execution, public_output, runtime
+from . import backends, contracts, execution, native_usage, public_output, runtime
 
 MAX_BYTES = 262144
 
@@ -76,6 +76,7 @@ def read(root, step, *, attempt=0, cursor=None, limit_bytes=65536):
     result = dict(status='progress_read', step=step, attempt=attempt, events=[], cursor=cursor,
                   scope='public_draft_log', sealed_conclusion=dict(step=step, available=(execution.origin(root, step) / 'result-identity.json').exists(), qualification='not_asserted'), bytes_read=0)
     result['role'] = job['role']
+    result['context'] = dict(status='unavailable')
     try:
         result['state'] = 'unstarted'
         intent_path = record / 'native-intent.json'
@@ -93,11 +94,12 @@ def read(root, step, *, attempt=0, cursor=None, limit_bytes=65536):
         meter_path = record / 'usage.json'
         observation_path = record / 'usage-observation.json'
         result['usage'] = dict(coverage='unknown')
+        result['usage']['measurement_status'] = native_usage.measurement_status(None)
         if meter_path.exists():
             meter = contracts.read(contracts.regular(meter_path, limit=4096))
             safe = public_output.event(dict(type='usage', usage=meter), lambda value: value)
             if safe:
-                result['usage'] = dict(safe['usage'], coverage='observed')
+                result['usage'].update(safe['usage'], coverage='observed')
         if (record / 'native-outcome.json').exists():
             result['state'] = 'native_outcome_present'
         if result['sealed_conclusion']['available']:
@@ -106,8 +108,14 @@ def read(root, step, *, attempt=0, cursor=None, limit_bytes=65536):
             observation = contracts.read(contracts.regular(observation_path, limit=MAX_BYTES))
             if observation.get('coverage') in {'live', 'terminal', 'unknown'}:
                 result['usage']['coverage'] = observation['coverage']
+            result['usage']['measurement_status'] = native_usage.measurement_status(observation)
+            if observation.get('coverage') in {'live', 'terminal'}:
+                result['context'] = native_usage.context(observation.get('context'))
     except (OSError, ValueError, TypeError, KeyError):
         result['observation_state'] = 'unavailable'
+        result['context'] = dict(status='unavailable')
+    result.setdefault('usage', dict(coverage='unknown'))
+    result['usage'].update(native_usage.breakdown(result['usage']))
     path = record / 'native.jsonl'
     try:
         # The record namespace is fixed, and the final file cannot be a symlink.

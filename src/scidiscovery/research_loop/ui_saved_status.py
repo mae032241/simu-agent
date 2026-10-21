@@ -1,5 +1,5 @@
 """Display saved control records without invoking scientific admission readers."""
-from . import budget, contracts as c, instance_display as display, runtime
+from . import budget, contracts as c, instance_display as display, native_usage, runtime
 
 
 def _read(path, default=None):
@@ -84,7 +84,18 @@ def _usage(root, numbers):
                 for key in totals:
                     totals[key] += value.get(key, 0)
     observed = totals['input_tokens'] + totals['output_tokens']
+    context = dict(status='unavailable')
+    measurement_status = native_usage.measurement_status(None)
+    if numbers:
+        step = numbers[-1]
+        record = attempts(root, step)[-1]
+        metadata = _read(record / 'usage-observation.json', {})
+        measurement_status = native_usage.measurement_status(metadata)
+        if metadata.get('coverage') in {'live', 'terminal'}:
+            context = native_usage.context(metadata.get('context'))
+        context.update(step=step, attempt=0 if record.name == f'{step:03d}' and record.parent.name == 'native-evidence' else int(record.name))
     return dict(totals, observed_tokens=observed, accounted_tokens=observed, unknown_steps=unknown,
+        **native_usage.breakdown(totals), context=context, measurement_status=measurement_status,
         reserved_tokens=0, reserved_unknown_steps=[], blocking_unknown_steps=[], accounting_basis='observed_lower_bound')
 
 

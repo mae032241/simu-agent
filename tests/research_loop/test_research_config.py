@@ -30,6 +30,57 @@ def output(capsys):
     return json.loads(capsys.readouterr().out)
 
 
+def test_research_plugin_file_is_relative_to_declaration_and_freezes_once(tmp_path, monkeypatch):
+    from scidiscovery.operations.execution import ExecutionInterfaceRegistration
+    from scidiscovery.operations.runtime_plugins import RuntimePluginFactory
+    from scidiscovery.research_loop import experiments
+    calls = []
+    def configure(config, source, *, binding):
+        assert binding == 'binding'
+        calls.append(source)
+        return config
+    def build(_):
+        raise AssertionError('configuration must not build a runtime')
+    declared = ExecutionInterfaceRegistration('third_party', '1', RuntimePluginFactory(
+        build, configure=configure, requires_config_file=True))
+    monkeypatch.setattr(experiments, 'registration', lambda executor: (declared, 'binding'))
+    plugin = tmp_path / 'plugin.toml'; plugin.write_text('setting = 9\n')
+    config = declaration(tmp_path, '\n[executor.config]\nexecutor = "third_party:binding"\nconfig_file = "plugin.toml"\n')
+    monkeypatch.chdir(tmp_path.parent)
+    settings = research_config.prepare(config)
+    assert settings['execution_config'] == dict(executor='third_party:binding', configuration={'setting': 9})
+    plugin.write_text('invalid TOML = [')
+    assert research_config.inspect(root=tmp_path/'instance')['settings']['execution_config'] == settings['execution_config']
+    assert calls == [plugin]
+
+
+def test_real_tcad_registration_rejects_invalid_file_before_instance_creation(tmp_path, monkeypatch):
+    import importlib.metadata
+    from scidiscovery.plugin_configuration import PluginConfigurationError
+    from scidiscovery.research_loop import experiments
+    from tcad_artifact import managed_execution as managed
+    entry = importlib.metadata.EntryPoint(name='tcad_execution',
+        value='tcad_artifact.managed_execution:REGISTRATION', group=experiments.GROUP)
+    original = importlib.metadata.entry_points
+    class Installed:
+        def select(self, **kwargs):
+            if kwargs == dict(group=experiments.GROUP, name='tcad_execution'):
+                return [entry]
+            return original().select(**kwargs)
+    monkeypatch.setattr(importlib.metadata, 'entry_points', lambda: Installed())
+    monkeypatch.setattr(managed, 'build_adapter', lambda *a, **k: pytest.fail('configuration built a TCAD adapter'))
+    plugin = tmp_path / 'tcad.toml'; plugin.write_text('transport = "invalid"\n')
+    config = declaration(tmp_path, '\n[executor.config]\nexecutor = "tcad_execution:tcad"\nconfig_file = "tcad.toml"\n')
+    assert experiments.registration('tcad_execution:tcad') == (managed.REGISTRATION, 'tcad')
+    before = sorted(tmp_path.rglob('*'))
+    with pytest.raises(PluginConfigurationError) as caught:
+        research_config.prepare(config)
+    assert caught.value.code == 'tcad_configuration_invalid'
+    assert caught.value.plugin_id == 'tcad_execution'
+    assert not (tmp_path / 'instance').exists()
+    assert sorted(tmp_path.rglob('*')) == before
+
+
 def test_basic_token_budget_edit_retains_all_other_declaration_semantics(tmp_path):
     path = declaration(tmp_path, '\n[permissions]\nweb = "cached"\nnetwork = false\n')
     for original in (path.read_text(), path.read_text().replace('max_tokens = 1000\n', '')):

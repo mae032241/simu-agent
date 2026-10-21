@@ -7,13 +7,17 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 import re
+import time
 
 FIELDS = ('input_tokens', 'cached_input_tokens', 'output_tokens')
 READ_BYTES = 1024 * 1024
 LINE_BYTES = 65536
 DISCOVERY_ENTRIES = 256
+DISCOVERY_DIRECTORIES = 4096
+MAX_SAFE_INTEGER = 2 ** 53 - 1
 
 
 def tokens(value):
@@ -21,6 +25,42 @@ def tokens(value):
             or value['cached_input_tokens'] > value['input_tokens']):
         return None
     return {key: value[key] for key in FIELDS}
+
+
+def context(value):
+    """Allowlist optional numeric telemetry, independently of billable counters."""
+    if not isinstance(value, dict) or value.get('status') != 'last_reported':
+        return dict(status='unavailable')
+    used, window = value.get('total_tokens'), value.get('model_context_window')
+    if (type(used) is not int or not 0 <= used <= MAX_SAFE_INTEGER
+            or type(window) is not int or not 0 < window <= MAX_SAFE_INTEGER):
+        return dict(status='unavailable')
+    result = dict(status='last_reported', total_tokens=used, model_context_window=window, ratio=used / window)
+    for key in ('reported_at', 'observed_at'):
+        stamp = value.get(key)
+        if type(stamp) in (int, float) and 0 <= stamp <= MAX_SAFE_INTEGER:
+            result[key] = stamp
+    return result
+
+
+def breakdown(value):
+    """Cached input is a subset of input, never another budget debit."""
+    meter = tokens(value)
+    if meter is None:
+        return {}
+    return dict(noncached_input_tokens=meter['input_tokens'] - meter['cached_input_tokens'],
+                cache_hit_ratio=meter['cached_input_tokens'] / meter['input_tokens'] if meter['input_tokens'] else None)
+
+
+def measurement_status(observation):
+    reason = observation.get('reason') if isinstance(observation, dict) else None
+    if reason == 'session_discovery_capacity':
+        return '正在定位会话计量'
+    if reason in {'session_unavailable', 'token_counter_unreported'}:
+        return '等待会话用量上报'
+    if not isinstance(observation, dict) or observation.get('coverage') not in {'live', 'terminal'}:
+        return '观测不可用或滞后，已知用量为下界'
+    return '最近已上报用量；运行中请求与平台上报延迟未计入'
 
 
 def _counter(line):
@@ -36,7 +76,21 @@ def _counter(line):
         # Codex emits token_count with null info for rate-limit updates too.
         if info is None:
             return None
-        return tokens(info.get('total_token_usage')) or 'invalid_token_counter'
+        meter = tokens(info.get('total_token_usage'))
+        if meter is None:
+            return 'invalid_token_counter'
+        last = info.get('last_token_usage')
+        telemetry = dict(status='last_reported', total_tokens=last.get('total_tokens') if isinstance(last, dict) else None,
+                         model_context_window=info.get('model_context_window'), observed_at=time.time())
+        stamp = event.get('timestamp')
+        if isinstance(stamp, str) and len(stamp) <= 64:
+            try:
+                parsed = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+                if parsed.tzinfo is not None:
+                    telemetry['reported_at'] = parsed.timestamp()
+            except (ValueError, OverflowError):
+                pass
+        return dict(meter, context=context(telemetry))
     except (ValueError, AttributeError):
         return 'invalid_token_counter'
 
@@ -59,6 +113,11 @@ class SessionUsage:
         self.fault = None
         self.unavailable = None
         self.resumed = session is not None
+        self.context = dict(status='unavailable')
+        self.discovery_pending = None
+        self.discovery_entries = None
+        self.discovery_match = None
+        self.discovery_duplicate = False
         if session:
             # Before launch, freeze both the counter baseline and append position.
             # Only a bounded tail is inspected, never the historical transcript.
@@ -80,8 +139,8 @@ class SessionUsage:
                         self.unavailable = self.reason = 'resume_usage_baseline_unavailable'
                         break
                     if isinstance(value, dict):
-                        self.baseline = value
-                        self.high = value
+                        self.baseline = tokens(value)
+                        self.high = tokens(value)
                 self.offset = size
                 if self.high is None or self.pending:
                     self.unavailable = self.reason = 'resume_usage_baseline_unavailable'
@@ -115,32 +174,55 @@ class SessionUsage:
         self.identity = (stat.st_dev, stat.st_ino)
         self.path, self.offset = path, len(line)
 
+    def _clear_discovery(self):
+        if self.discovery_entries is not None:
+            self.discovery_entries.close()
+        self.discovery_entries = None
+        self.discovery_pending = None
+        self.discovery_match = None
+        self.discovery_duplicate = False
+
     def _discover(self):
         if self.thread is None:
             return
-        matches = []
         # Count every directory entry, including directories and unrelated files.
-        # scandir is lazy: a large non-session tree cannot bypass the read budget.
-        pending, visited = [self.home / 'sessions'], 0
-        while pending:
-            with os.scandir(pending.pop()) as entries:
-                for entry in entries:
-                    if visited >= DISCOVERY_ENTRIES:
-                        self.reason = 'session_discovery_capacity'
-                        return
-                    visited += 1
-                    if entry.is_dir(follow_symlinks=False):
-                        pending.append(Path(entry.path))
-                    elif (entry.name.endswith('.jsonl') and self.thread in entry.name
-                            and entry.is_file(follow_symlinks=False)):
-                        matches.append(Path(entry.path))
-        if len(matches) != 1:
-            self.reason = 'session_unavailable' if not matches else 'session_ambiguous'
+        # Keep one lazy iterator across polls so large homes eventually finish,
+        # while duplicates anywhere in the sweep still reject the binding.
+        if self.discovery_pending is None:
+            self.discovery_pending = [self.home / 'sessions']
+        visited = 0
+        while self.discovery_entries is not None or self.discovery_pending:
+            if visited >= DISCOVERY_ENTRIES:
+                self.reason = 'session_discovery_capacity'
+                return
+            if self.discovery_entries is None:
+                self.discovery_entries = os.scandir(self.discovery_pending.pop())
+            entry = next(self.discovery_entries, None)
+            if entry is None:
+                self.discovery_entries.close()
+                self.discovery_entries = None
+                continue
+            visited += 1
+            if entry.is_dir(follow_symlinks=False):
+                if len(self.discovery_pending) >= DISCOVERY_DIRECTORIES:
+                    self.fault = 'session_discovery_directory_capacity'
+                    self._clear_discovery()
+                    return
+                self.discovery_pending.append(Path(entry.path))
+            elif (entry.name.endswith('.jsonl') and self.thread in entry.name
+                    and entry.is_file(follow_symlinks=False)):
+                self.discovery_duplicate = self.discovery_match is not None
+                self.discovery_match = Path(entry.path)
+        match, duplicate = self.discovery_match, self.discovery_duplicate
+        self._clear_discovery()
+        if match is None or duplicate:
+            self.reason = 'session_ambiguous' if duplicate else 'session_unavailable'
             return
-        self._bind(matches[0])
+        self._bind(match)
 
     def poll(self):
         if self.fault or self.unavailable:
+            self._clear_discovery()
             return self.snapshot()
         try:
             if self.path is None:
@@ -177,8 +259,9 @@ class SessionUsage:
                                 if tokens(delta) is None:
                                     self.fault = 'invalid_token_delta'
                                 else:
-                                    self.high = value
+                                    self.high = tokens(value)
                                     self.known = delta
+                                    self.context = value['context']
                                     self.reason = None
                     self.pending = b''
                     self.skipping = False
@@ -187,6 +270,7 @@ class SessionUsage:
             elif self.offset < stat.st_size:
                 self.reason = 'session_read_backlog'
         except (OSError, ValueError, AttributeError):
+            self._clear_discovery()
             self.reason = 'session_unavailable'
         return self.snapshot()
 
@@ -196,5 +280,6 @@ class SessionUsage:
                     reason=self.fault or self.reason, tokens=dict(self.known),
                     baseline_tokens=dict(self.baseline) if self.resumed and not self.unavailable else None,
                     has_observation=self.high is not None and not (self.resumed and self.high == self.baseline),
+                    context=dict(status='unavailable') if self.fault or self.reason else dict(self.context),
                     unreported_usage='Running requests and reporting delay are unmeasured.',
                     individual_request_usage='unavailable')

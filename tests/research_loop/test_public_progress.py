@@ -110,7 +110,13 @@ def test_real_cli_progress_and_http_reader_share_projection_and_resume_cursor(tm
     ui, cookie = session(root, key)
     status, body, headers = ui.get('/nodes/1/events', host=ui.host, cookie=cookie)
     assert status == 200 and headers['Content-Type'].startswith('application/json')
-    assert json.loads(body) == value
+    displayed = json.loads(body)
+    assert set(displayed) - set(value) == {'progress_label', 'token_details'}
+    assert {name: item for name, item in displayed.items()
+            if name not in {'progress_label', 'token_details'}} == value
+    assert displayed['progress_label'].endswith('公开日志已连接')
+    from scidiscovery.research_loop import ui_view
+    assert displayed['token_details'] == ui_view.token_details(value['usage'], dict(value['context'], step=1, attempt=0))
     with log.open('ab') as stream:
         stream.write(line(message('appended after disconnect')))
     invoked = subprocess.run(command + ['--cursor', value['cursor']], env=env, capture_output=True, check=True)
@@ -152,6 +158,42 @@ def test_progress_poll_never_walks_prior_attempts_or_history(tmp_path, monkeypat
     page = progress.read(root, 1)
     assert page['events'][0]['text'] == 'bounded current attempt'
     assert progress.read(root, 1, cursor=page['cursor'])['events'] == []
+
+
+def test_exact_attempt_usage_breakdown_and_safe_optional_context(tmp_path):
+    root, key, log = transport(tmp_path)
+    log.write_bytes(line(message('public')))
+    meter = dict(input_tokens=100, cached_input_tokens=80, output_tokens=5)
+    c.write(log.parent / 'usage.json', meter)
+    c.write(log.parent / 'usage-observation.json', dict(coverage='live', thread_id='private-thread',
+        context=dict(status='last_reported', total_tokens=25, model_context_window=100,
+                     ratio=900, private_path='/private/session', text='private-context')))
+    value = progress.read(root, 1)
+    assert value['usage']['noncached_input_tokens'] == 20
+    assert value['usage']['cache_hit_ratio'] == .8
+    assert value['context'] == dict(status='last_reported', total_tokens=25, model_context_window=100, ratio=.25)
+    assert c.read(log.parent / 'usage.json') == meter
+    assert 'private-' not in json.dumps(value)
+    assert progress.read(root, 1, attempt=1)['context'] == dict(status='unavailable')
+    assert 'input_tokens' not in progress.read(root, 1, attempt=1)['usage']
+    ui, cookie = session(root, key)
+    status, body, _ = ui.get('/nodes/1/progress', host=ui.host, cookie=cookie)
+    assert status == 200
+    page = body.decode() if isinstance(body, bytes) else body
+    assert 'data-token-details' in page and '80.0%' in page and '25 / 100' in page
+    c.write(log.parent / 'usage-observation.json', dict(coverage='unknown', reason='session_discovery_capacity',
+        context=dict(status='last_reported', total_tokens=25, model_context_window=100)))
+    unknown = progress.read(root, 1)
+    assert unknown['context'] == dict(status='unavailable')
+    assert unknown['usage']['measurement_status'] == '正在定位会话计量'
+
+
+def test_zero_input_has_no_invented_cache_hit(tmp_path):
+    root, _, log = transport(tmp_path)
+    c.write(log.parent / 'usage.json', dict(input_tokens=0, cached_input_tokens=0, output_tokens=5))
+    value = progress.read(root, 1)
+    assert value['usage']['cache_hit_ratio'] is None
+    assert value['usage']['noncached_input_tokens'] == 0
 
 
 def test_real_live_runner_identity_preserves_cursor_namespace_across_polls(tmp_path):

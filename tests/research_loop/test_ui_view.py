@@ -178,6 +178,22 @@ def test_usage_cards_mark_overrun_unknown_usage_and_waiting():
     assert missing['tokens']['value'] == '未记录' and missing['time']['limit'] == '未记录' and missing['candidates']['value'] == '未记录'
 
 
+def test_token_monitoring_keeps_cache_subset_and_context_independent(monkeypatch):
+    monkeypatch.setattr(ui_view.time, 'time', lambda: 150)
+    usage = dict(input_tokens=100, cached_input_tokens=80, output_tokens=5, observed_tokens=105,
+                 context=dict(status='last_reported', total_tokens=30, model_context_window=100, reported_at=140))
+    token_card = ui_view.usage_stats(dict(usage=usage))['tokens']
+    values = {row['label']: row['value'] for row in token_card['details']}
+    assert token_card['raw'] == 105
+    assert values['输入'] == '100' and values['缓存输入'] == '80'
+    assert values['非缓存输入'] == '20' and values['输出'] == '5'
+    assert values['缓存命中率'] == '80.0%'
+    assert values['最近一次上报上下文'] == '30 / 100 · 30.0%；上报于 10 秒前'
+    empty = ui_view.token_details(dict(input_tokens=0, cached_input_tokens=0, output_tokens=5))
+    assert {row['label']: row['value'] for row in empty}['缓存命中率'] == '不可用'
+    assert '不可用' in {row['label']: row['value'] for row in empty}['最近一次上报上下文']
+
+
 def test_candidate_rows_keep_observation_order_groups_marks_and_missing_values():
     index = [dict(id=f'local-{number:02d}', label=None if number == 3 else f'c{number}',
                   evaluation_key=None if number == 4 else ('val' if number % 2 else 'test'),

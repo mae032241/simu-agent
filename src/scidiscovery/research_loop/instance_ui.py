@@ -27,7 +27,7 @@ from . import instance_render as render
 from . import instance_live as live
 from . import configuration_form, progress, public_output, research_config, user_guidance
 from . import ui_components as ui
-from . import ui_mechanisms, ui_view, ui_translation
+from . import ui_mechanisms, ui_view, ui_translation, ui_errors
 
 
 _ENTRY_SCRIPT = "location.replace('./');"
@@ -60,6 +60,7 @@ class InstanceUI:
         self.instance_roots = list(dict.fromkeys([self.root, *(Path(item).expanduser().resolve() for item in instance_roots)]))
         self.children = {}
         settings = {} if workspace else display.settings(self.root)
+        self.error_settings = settings
         self.approvals_configured = settings.get('execution_authority_policy') is not None
         self.approvals = self.approvals_configured and approval_host
         self.secret = security.read_secret_file(secret_file, label='instance UI')
@@ -99,6 +100,83 @@ class InstanceUI:
     def _page(self, title, body, *, live=True):
         marker = '<p class="connection" data-live-url="/live" role="status">正在连接工作台状态…</p>'
         return render.page(title, (marker if live else '') + body, live=live)
+
+    def _problem(self, error, *, context=''):
+        return ui_errors.present(error, self.root, context=context, settings=self.error_settings)
+
+    @staticmethod
+    def _error_page(problem, body):
+        # Recovery pages must also work without the unreadable instance, live
+        # stream or authenticated translation service that caused the failure.
+        return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1"><title>'
+            + html.escape(problem.title) + '</title><style>' + render.CSS
+            + '</style></head><body><main><h1>' + html.escape(problem.title) + '</h1>'
+            + body + '</main></body></html>').encode()
+
+    def _failure(self, error):
+        problem = self._problem(error)
+        return dict(error=dict(kind=problem.title, message=problem.cause + ' ' + problem.hint
+            + (' 错误编号：' + problem.reference if problem.reference else '')))
+
+    def _guarded(self, function, *args, clean=None, **options):
+        try:
+            return function(*args, **options)
+        except Exception as error:
+            return self._failure(error)
+
+    def _error_response(self, error, target, *, json_response=False):
+        path = target.partition('?')[0]
+        context = ('translation' if '/translation/' in path else 'load-config' if path.endswith('/load-config')
+            else 'configuration' if path.endswith(('/configure', '/create', '/configuration'))
+            else 'open' if path.endswith('/open') else 'budget' if path.endswith('/budget') else 'control')
+        problem = self._problem(error, context=context)
+        if isinstance(error, json.JSONDecodeError) and path.endswith(('/lookup', '/start')):
+            problem = ui_errors.Problem(400, '翻译请求 JSON 无效', '请求体不是有效的 JSON。',
+                '重新打开阅读页面后再提交翻译请求。', href='/reading', code='invalid_request')
+        if json_response:
+            return problem.status, json.dumps(problem.payload(), ensure_ascii=False).encode(), {'Content-Type': 'application/json; charset=utf-8'}
+        return problem.status, self._error_page(problem, problem.markup()), {}
+
+    def _control_error(self, token, action, form, error):
+        context = 'configuration' if action in {'configure', 'create', 'configuration'} else action if action in {'open', 'load-config', 'budget'} else 'control'
+        problem = self._problem(error, context=context)
+        if action in {'configure', 'create', 'load-config'}:
+            selected = self.config_selections.get(token)
+            draft = selected['draft'] if selected else configuration_form.blank(base=self.root)
+            if action == 'configure':
+                fields = {key: value for key, value in form.items() if key not in {'nonce', 'csrf', 'selection', 'save_path', 'mode'}}
+                try:
+                    draft = configuration_form.parse(fields, base=draft['base'])
+                except Exception as parse_error:
+                    draft = getattr(parse_error, 'draft', draft)
+            selection = self._remember_config(token, draft, source=selected['source'] if selected else None)
+            return self._new_research_page(token, draft=draft, selection=selection, notice=problem,
+                config_path=form.get('config_path', ''), save_path=form.get('save_path', ''))
+        fields = ''
+        if action == 'open':
+            fields = '<label>实例目录<input name="root" required value="' + html.escape(form['root'], quote=True) + '"></label>'
+        elif action == 'budget':
+            for key, label in [('max_tokens', '新的 tokens 总上限'), ('max_seconds', '新的时间总上限（秒）'),
+                    ('max_steps', '新的阶段总上限'), ('authorization_note', '调整说明')]:
+                fields += '<label>' + label + '<textarea name="' + key + '">' + html.escape(form[key]) + '</textarea></label>'
+            if form.get('authorization_statement', '').strip():
+                fields += '<input type="hidden" name="authorization_statement" value="' + html.escape(form['authorization_statement'], quote=True) + '">'
+            fields += '<p class="note">提交即确认所填写的新上限；说明随变更记录保存。</p>'
+        elif action == 'continue':
+            fields = '<input type="hidden" name="ack_correction" value="' + html.escape(form['ack_correction'], quote=True) + '">'
+            fields += '<label>继续本次研究的说明<textarea name="authorization_note">' + html.escape(form['authorization_note']) + '</textarea></label>'
+        elif action == 'resume' and isinstance(error, ui_errors.InputError):
+            fields = '<label>阶段编号<textarea name="step">' + html.escape(form['step']) + '</textarea></label>'
+        elif action.startswith('guidance-'):
+            for key, value in form.items():
+                if key not in {'nonce', 'csrf'}:
+                    fields += '<label>' + html.escape(key) + '<textarea name="' + html.escape(key, quote=True) + '">' + html.escape(value) + '</textarea></label>'
+        # Failed control receipts must first be reconciled on the operations
+        # page; rendering a start/resume form here would invite blind replay.
+        body = problem.markup() + (self._form(token, action, fields, '确认调整预算' if action == 'budget' else '修改后重新提交')
+            if fields and not isinstance(error, ui_errors.ControlFailure) else '')
+        return problem.status, self._error_page(problem, body), {}
 
     def _csrf(self, browser_token, action, nonce):
         return security.receipt_hmac(self.secret, security.canonical(
@@ -177,9 +255,13 @@ class InstanceUI:
         return dict(self.translation.settings(), nonce=self.translation_nonce,
             csrf={action: self._csrf(token, 'translation-' + action, self.translation_nonce) for action in actions})
 
-    def _reading_page(self, token):
+    def _reading_page(self, token, *, submitted=None, problem=None):
         self._admin(token)
         value = self.translation.settings()
+        if submitted is not None:
+            value.update({key: submitted[key] for key in ('target_language', 'backend', 'model',
+                'reasoning_effort', 'service_tier', 'timeout_seconds') if key in submitted})
+            value['enabled'] = submitted.get('enabled') == 'true'
         def field(name, label, *, placeholder='', type_='text'):
             return ('<label>' + label + '<input name="' + name + '" type="' + type_ + '" value="'
                 + ui.esc(value.get(name) or '') + '" placeholder="' + ui.esc(placeholder) + '"></label>')
@@ -192,17 +274,18 @@ class InstanceUI:
                 + (' selected' if value.get('backend') == backend else '') + '>' + label + '</option>'
                 for backend, label in [('codex', 'Codex'), ('protocol', '协议启动器')]) + '</select></label>'
             + field('model', '翻译模型', placeholder='填写本机后端可用的模型名称')
-            + '<details><summary>高级设置</summary>'
+            + '<details' + (' open' if problem and problem.field in {'reasoning_effort', 'service_tier', 'timeout_seconds', 'launcher_argv'} else '') + '><summary>高级设置</summary>'
             + field('reasoning_effort', '推理力度（可选）') + field('service_tier', '服务档位（可选）')
             + field('timeout_seconds', '单批超时（秒，最多 300）', type_='number')
-            + '<label>启动命令参数（可选 JSON 数组）<textarea name="launcher_argv" placeholder="例如 [&quot;/path/to/launcher&quot;]"></textarea></label>'
+            + '<label>启动命令参数（可选 JSON 数组）<textarea name="launcher_argv" placeholder="例如 [&quot;/path/to/launcher&quot;]">'
+            + ui.esc(public_output.cleaner(self.root, settings={})((submitted or {}).get('launcher_argv', ''))) + '</textarea></label>'
             + '<label class="check-label"><input type="checkbox" name="reset_launcher" value="true">恢复默认 Codex 启动命令</label>'
             + '<p class="note">留空保留已保存的启动命令。请使用本机后端的登录设置；此处不填写凭据。</p></details>')
         body = ('<nav><a href="/">返回工作台</a></nav><details open><summary>阅读与翻译</summary>'
             '<p>翻译仅用于阅读。设置在工作台内跨实例共享，独立于研究模型与预算。原文和下载文件保持原样。</p>'
             '<p>保存语言后会读取该语言的缓存；点击“翻译缺失内容”才会调用模型。切回已有语言可继续使用缓存。</p>'
-            '<form method="post" action="/translation/configure">' + fields + '<button type="submit">保存阅读设置</button></form></details>')
-        return 200, self._page('阅读与翻译', body, live=False), {}
+             + (problem.markup() if problem else '') + '<form method="post" action="/translation/configure">' + fields + '<button type="submit">保存阅读设置</button></form></details>')
+        return (problem.status if problem else 200), self._page(problem.title if problem else '阅读与翻译', body, live=False), {}
 
     def _translation_post(self, path, cookie, content_type, body):
         action = path.removeprefix('/translation/')
@@ -232,18 +315,24 @@ class InstanceUI:
                 value['csrf'], self._csrf(token, 'translation-' + action, self.translation_nonce)):
             raise PermissionError('Translation CSRF mismatch')
         if action == 'configure':
-            config = {key: item for key, item in value.items() if key not in {'nonce', 'csrf', 'launcher_argv', 'enabled', 'reset_launcher'}}
-            config['enabled'] = value.get('enabled') == 'true'
-            config['model'] = config.get('model') or None
-            config['timeout_seconds'] = int(config.get('timeout_seconds') or 120)
-            for key in ('reasoning_effort', 'service_tier'):
-                config[key] = config.get(key) or None
-            if value.get('reset_launcher') == 'true' or (config.get('backend') == 'codex' and self.translation.settings()['backend'] != 'codex'):
-                config['launcher_argv'] = None
-            if value.get('launcher_argv', '').strip():
-                config['launcher_argv'] = json.loads(value['launcher_argv'])
-            self.translation.configure(config)
-            return 303, b'', {'Location': '/reading'}
+            try:
+                config = {key: item for key, item in value.items() if key not in {'nonce', 'csrf', 'launcher_argv', 'enabled', 'reset_launcher'}}
+                config['enabled'] = value.get('enabled') == 'true'
+                config['model'] = config.get('model') or None
+                try:
+                    config['timeout_seconds'] = int(config.get('timeout_seconds') or 120)
+                except ValueError:
+                    raise ValueError('Translation timeout_seconds must be between 1 and 300.') from None
+                for key in ('reasoning_effort', 'service_tier'):
+                    config[key] = config.get(key) or None
+                if value.get('reset_launcher') == 'true' or (config.get('backend') == 'codex' and self.translation.settings()['backend'] != 'codex'):
+                    config['launcher_argv'] = None
+                if value.get('launcher_argv', '').strip():
+                    config['launcher_argv'] = json.loads(value['launcher_argv'])
+                self.translation.configure(config)
+                return 303, b'', {'Location': '/reading'}
+            except Exception as error:
+                return self._reading_page(token, submitted=value, problem=self._problem(error, context='translation'))
         return self._translation_json(getattr(self.translation, action)(value['texts']))
 
     def _instances_page(self, token):
@@ -275,7 +364,7 @@ class InstanceUI:
         body += '</section><details><summary>工作台信息</summary><p class="note">工作台目录：' + html.escape(str(self.root)) + '</p></details>'
         return 200, self._page('研究工作台', body), {}
 
-    def _new_research_page(self, token, *, draft=None, selection='', preview=None, notice='', frozen=''):
+    def _new_research_page(self, token, *, draft=None, selection='', preview=None, notice='', frozen='', config_path='', save_path=''):
         self._admin(token)
         if draft is None:
             draft = configuration_form.blank(base=self.root)
@@ -287,7 +376,8 @@ class InstanceUI:
             '<li data-setup-marker="2"><span>2</span>模型与预算</li>'
             '<li data-setup-marker="3"><span>3</span>确认创建</li></ol>')
         if notice:
-            body += '<p class="setup-notice" role="alert" tabindex="-1">' + html.escape(notice) + '</p>'
+            body += ('<div class="setup-notice">' + notice.markup() + '</div>' if isinstance(notice, ui_errors.Problem)
+                else '<p class="setup-notice" role="alert" tabindex="-1">' + html.escape(notice) + '</p>')
         selected = self.config_selections.get(token) if selection else None
         source = selected.get('source') if selected else None
         if source:
@@ -358,15 +448,16 @@ class InstanceUI:
             body += '<div class="setup-actions"><button type="button" hidden class="secondary-button" data-setup-go="2">← 返回修改</button>'
             body += self._form(token, 'create', '<input type="hidden" name="selection" value="' + html.escape(selection,quote=True) + '">', '确认创建研究')+'</div>'
             body += '<p class="note">创建不会调用模型。进入实例后点击“开始研究”才会运行。</p></section>'
-        body += ('<details class="setup-tools"><summary>配置文件工具<span class="summary-note">可选 · 导入、导出或保存</span></summary>'
+        body += ('<details class="setup-tools"' + (' open' if isinstance(notice, ui_errors.Problem) and (config_path or save_path or notice.field in {'config_path', 'save_path'}) else '') + '><summary>配置文件工具<span class="summary-note">可选 · 导入、导出或保存</span></summary>'
             '<div class="tools-grid"><div><h3>导入已有配置</h3><p class="note">从服务器上的 TOML 文件开始，导入后仍需检查并确认。</p>'
-            + self._form(token, 'load-config', '<label>服务器上的配置文件路径<input name="config_path" required placeholder="/srv/research/research.toml"></label>', '导入配置')
+            + self._form(token, 'load-config', '<label>服务器上的配置文件路径<input name="config_path" required value="' + html.escape(config_path, quote=True) + '" placeholder="/srv/research/research.toml"></label>', '导入配置')
             + '</div><div><h3>保留当前配置</h3><p class="note">导出为浏览器下载，或保存到服务器。都不会创建、开始研究。</p>'
             '<button class="secondary-button" form="research-config-form" name="mode" value="export" type="submit">下载 TOML 配置</button>'
-            '<label>保存到服务器的文件路径<input form="research-config-form" name="save_path" placeholder="/srv/research/research.toml"></label>'
+            '<label>保存到服务器的文件路径<input form="research-config-form" name="save_path" value="' + html.escape(save_path, quote=True) + '" placeholder="/srv/research/research.toml"></label>'
             '<button class="secondary-button" form="research-config-form" name="mode" value="save" type="submit">保存到服务器</button></div></div></details>'
             +frozen+'</div>')
-        return 200, self._page('创建你的研究', body), {}
+        return (notice.status if isinstance(notice, ui_errors.Problem) else 200), self._page(
+            notice.title if isinstance(notice, ui_errors.Problem) else '创建你的研究', body), {}
 
     def _selected_config(self, token, selection):
         selected = self.config_selections.get(token)
@@ -393,6 +484,7 @@ class InstanceUI:
         path = Path(path).expanduser().absolute()
         if path.suffix.lower() != '.toml' or path.resolve() == self.secret_file:
             raise ValueError('Select a research TOML declaration file')
+        path.lstat()  # Preserve missing-file identity before regular()'s type check.
         source = c.regular(path, limit=256000).read_bytes()
         path = path.resolve()
         document = research_config.read_declaration(path)
@@ -471,13 +563,20 @@ class InstanceUI:
         return 200, self._page('控制请求记录', body), {}
 
     def _operation_rows(self, rows):
-        clean = public_output.cleaner(self.root)
         labels = {'accepted':'请求已接受', 'running':'控制请求正在处理', 'completed':'控制请求已结束', 'failed':'处理失败', 'applied':'已应用'}
         body = ''
         for row in reversed(rows):
-            body += '<section><h2>' + labels.get(row['status'], '请求已记录') + '</h2><p>' + ('预算调整' if row['kind'] == 'budget' else '研究控制') + '</p>'
+            result = row.get('result') or {}
+            stopped = result.get('status') in {'native_stopped', 'native_outcome_unsealed', 'seal_pending',
+                'output_repair_required', 'output_repair_unavailable'}
+            label = ('研究推进已停止，原任务待核对' if stopped else '控制请求已结束；请核对研究状态') \
+                if row['kind'] == 'controller' and row['status'] == 'applied' else labels.get(row['status'], '请求已记录')
+            body += '<section><h2>' + label + '</h2><p>' + ('预算调整' if row['kind'] in {'budget', 'budget_amend'} else '研究控制') + '</p>'
+            operation_id = row.get('operation_id')
+            if isinstance(operation_id, str) and len(operation_id) == 32 and all(char in '0123456789abcdef' for char in operation_id):
+                body += '<p class="note">请求编号：<code>' + operation_id + '</code></p>'
             if row.get('error'):
-                body += '<p>' + html.escape(clean(row['error'])) + '</p>'
+                body += self._problem(ui_errors.ControlFailure(str(row['error'])), context='control').markup()
             body += '</section>'
         return body or '<p>还没有控制请求。</p>'
 
@@ -522,6 +621,8 @@ class InstanceUI:
             'unavailable': '公开进度暂不可用', 'replaced': '日志来源已变化',
             'truncated': '日志已截短'}.get(value['stream_state'], '公开日志状态待确认')
         value['progress_label'] = lifecycle + '；' + stream
+        value['token_details'] = ui_view.token_details(value.get('usage') or {},
+            dict(value.get('context') or {}, step=step, attempt=attempt))
         return value
 
     def _progress_page(self, step, attempt, cursor):
@@ -539,12 +640,14 @@ class InstanceUI:
             body += '<a href="' + base + '&amp;cursor=' + quote(value['cursor'], safe='') + '">手动读取下一批消息</a>'
         if value.get('restart_required'):
             body += '<p>日志来源已变化，请点击上方“重新读取公开进度”；系统不会重新提交研究任务。</p>'
+        body += ui.token_monitor(value['token_details'], scope=f'第 {step} 阶段 · attempt {attempt} · 本次助手用量', live=True)
         return 200, self._page('实时进度', body, live=True), {}
 
     def _following_progress_page(self):
         body = self._navigation() + '<p>这里自动跟随当前阶段；打开各阶段的公开进度链接可固定查看历史记录。</p>'
         body += '<section data-progress="" data-follow-latest="true" data-cursor=""><h2 data-progress-heading>当前助手的公开工作</h2><p data-stream-status>正在读取当前阶段状态…</p><div data-events></div>'
         body += '<details><summary>高级：公开事件详情</summary><pre data-raw-events>[]</pre></details></section>'
+        body += ui.token_monitor(scope='当前阶段 · 正在读取助手用量…', live=True)
         return 200, self._page('实时进度', body, live=True), {}
 
     @staticmethod
@@ -579,7 +682,7 @@ class InstanceUI:
             operations = saved_status.operations(self.root)
             final = self._final_step()
             # One read-only projection per snapshot; components fail separately.
-            projection = ui_view.guarded(ui_view.project, self.root, view, final_step=final, memo=self.view_memo,
+            projection = self._guarded(ui_view.project, self.root, view, final_step=final, memo=self.view_memo,
                                          clean=ui_view.cleaner(self.root))
             return dict(view=view, conclusion=conclusion, operation=operations[-1] if operations else None, operations=operations[-20:],
                         final=final, ui=projection)
@@ -633,7 +736,7 @@ class InstanceUI:
             except Exception as error:  # noqa: BLE001 - one unreadable instance never hides the others
                 # Show the exact failure class and its path-cleaned message.
                 rows.append(ui.instance_card(dict(heading=heading, path=str(root), retry='/instances',
-                    error=ui_view.failure(error, ui_view.cleaner(root))['error'])))
+                    error=self._failure(error)['error'])))
         if not rows:
             return '<p>还没有加载实例。你可以新建一个，或填写目录加载已有研究。</p>'
         return '<div class="instance-cards">' + ''.join(rows) + '</div>'
@@ -731,7 +834,7 @@ class InstanceUI:
                 '调整预算需在“更多操作”中填写新上限与授权原因。' if manager else '调整预算需使用本地管理入口。'),
                 **(dict(href='#budget', action='调整预算') if manager else {})))
         if self.approvals:
-            pending = ui_view.guarded(self._pending_requests)
+            pending = self._guarded(self._pending_requests)
             if 'error' in pending:
                 items.append(dict(text='实验执行请求暂不可读：' + pending['error']['kind'] + '：' + pending['error']['message'],
                                   href='/requests', action='查看实验执行请求'))
@@ -800,7 +903,7 @@ class InstanceUI:
         try:
             return self._snapshot(force=force)
         except Exception as error:  # noqa: BLE001 - the page keeps its other parts readable
-            return dict(error=ui_view.failure(error, ui_view.cleaner(self.root)))
+            return dict(error=self._failure(error))
 
     def _dashboard_parts(self, token, snapshot):
         manager = 'maintenance' in self.browser.verify(token, instance_id=self.instance).scopes
@@ -811,13 +914,14 @@ class InstanceUI:
             hero = ui.hero({}, status, attention=[dict(text='实例快照读取失败（' + error['error']['kind'] + '：'
                 + error['error']['message'] + '）。本页面只读，没有写入任何记录；请核对实例记录后重新打开。',
                 href='/results', action='查看阶段结论')])
-            return {'live-hero': hero, 'live-usage': ui.stats(error), 'live-activity': '', 'live-trail': ui.trail(error)}
+            return {'live-hero': hero, 'live-usage': ui.stats(error), 'live-activity': '', 'live-trail': ui.trail(error),
+                    'live-token-monitor': ''}
         view = snapshot['view']
         receipt = self._receipt(snapshot)
         display = self._presentation(snapshot, receipt)
         activity = None
         if display['active'] and display['current']:
-            activity = ui_view.guarded(self._activity, display['current'], clean=ui_view.cleaner(self.root))
+            activity = self._guarded(self._activity, display['current'], clean=ui_view.cleaner(self.root))
         status = self._status(snapshot, receipt, elapsed=(activity or {}).get('elapsed'))
         projection = snapshot.get('ui') or {}
         if 'error' in projection:
@@ -825,7 +929,7 @@ class InstanceUI:
             trail = projection
             header = projection
         else:
-            usage = ui_view.guarded(ui_view.usage_stats, view, used_steps=projection.get('used_steps'),
+            usage = self._guarded(ui_view.usage_stats, view, used_steps=projection.get('used_steps'),
                                     candidates=projection.get('candidates'))
             trail = projection.get('trail') or {}
             header = projection.get('header') or {}
@@ -833,7 +937,9 @@ class InstanceUI:
                        attention=self._attention(token, manager, snapshot, status), notices=self._notices(snapshot, receipt))
         # A finished study shows every round as one line; otherwise the current round opens.
         return {'live-hero': hero, 'live-usage': ui.stats(usage), 'live-activity': ui.activity(activity),
-                'live-trail': ui.trail(trail, older_href='/results', open_current=not display['completed'])}
+                'live-trail': ui.trail(trail, older_href='/results', open_current=not display['completed']),
+                'live-token-monitor': '' if 'error' in usage else ui.token_monitor(
+                    usage['tokens'].get('details'), scope='整个研究 · 累计已记录用量')}
 
     def _live_snapshot(self, token, mount, *, force=False):
         self.browser.verify(token, instance_id=self.instance)
@@ -886,7 +992,7 @@ class InstanceUI:
         if step is not None:
             body += self._form(browser_token, 'resume', '<input type="hidden" name="step" value="' + str(step) + '">', '继续此阶段原任务（须满足原有条件）')
         body += '<details class="budget-adjustment"><summary>申请调整预算</summary><div id="budget"><p>填写新上限和原因。变更在安全边界处理；已用额度保留。</p>'
-        body += self._form(browser_token, 'budget', '<label>新的 tokens 总上限<input name="max_tokens" type="number" min="1"></label><label>新的时间总上限（秒）<input name="max_seconds" type="number" step="any" min="0"></label><label>新的阶段总上限<input name="max_steps" type="number" min="1"></label><label>授权原因<textarea name="authorization_note" required></textarea></label><label>原始授权陈述（调整阶段上限时必填）<textarea name="authorization_statement"></textarea></label>', '提交预算变更')
+        body += self._form(browser_token, 'budget', '<label>新的 tokens 总上限<input name="max_tokens" type="number" min="1"></label><label>新的时间总上限（秒）<input name="max_seconds" type="number" step="any" min="0"></label><label>新的阶段总上限<input name="max_steps" type="number" min="1"></label><label>调整说明<textarea name="authorization_note" required></textarea></label><p class="note">提交即确认所填写的新上限；说明随变更记录保存。</p>', '确认调整预算')
         body += '</div></details>'
         body += '<p><a href="/operations">控制请求记录</a> · <a href="/?after=0">浏览全部阶段记录</a>'
         if self.approvals:
@@ -910,7 +1016,7 @@ class InstanceUI:
             header = {} if 'error' in snapshot else ((snapshot.get('ui') or {}).get('header') or {})
             title = header.get('title') if 'error' not in header and header.get('title') else '研究总览'
             body = self._navigation('/')
-            for name in ('live-hero', 'live-usage', 'live-activity', 'live-trail'):
+            for name in ('live-hero', 'live-usage', 'live-activity', 'live-trail', 'live-token-monitor'):
                 body += '<div id="' + name + '">' + parts[name] + '</div>'
             state = None if 'error' in snapshot else self._status(snapshot, self._receipt(snapshot))['state']
             body += self._more_actions(browser_token, snapshot, open_=state in {'budget_exhausted', 'final'})
@@ -934,6 +1040,7 @@ class InstanceUI:
         if view.get('next_after') is not None:
             body += '<a href="/?after=' + str(view['next_after']) + '">查看后续阶段</a>'
         body += '</section>'
+        body += '<div id="live-token-monitor">' + parts['live-token-monitor'] + '</div>'
         body += self._more_actions(browser_token, snapshot, step=step)
         return 200, self._page('研究阶段', body), {}
 
@@ -977,14 +1084,14 @@ class InstanceUI:
         # Reuse this page's verified sealed reads; projection reads at most WINDOW
         # stages and never calls the mutating control/status recovery path.
         mechanism_steps = found if not explicit else self._sealed_steps()
-        mechanisms = ui_view.guarded(ui_mechanisms.project, reader, mechanism_steps, clean, clean=clean)
+        mechanisms = self._guarded(ui_mechanisms.project, reader, mechanism_steps, clean, clean=clean)
         body += '<div id="live-mechanisms">' + ui_mechanisms.render(mechanisms) + '</div><h2>阶段原文记录</h2>'
         if not shown:
             body += '<p>还没有阶段结论。开始研究后，可先到“实时进度”查看工作情况。</p>'
         else:
             body += '<ol class="results-list">'
             for step in reversed(shown):
-                row = ui_view.guarded(ui_view.results_list_row, reader, step, clean, clean=clean)
+                row = self._guarded(ui_view.results_list_row, reader, step, clean, clean=clean)
                 if 'error' in row:
                     body += ('<li>' + ui.link('第 ' + str(step) + ' 阶段', '/results/' + str(step))
                              + ui.error_inline(row, what='本阶段摘要') + '</li>')
@@ -1031,9 +1138,9 @@ class InstanceUI:
         role = job['role']
         label = ui_view.ROLE_LABELS.get(role, role)
         if role != 'A':
-            mechanisms = ui_view.guarded(ui_view.mechanism_labels, reader, range(1, step + 1))
+            mechanisms = self._guarded(ui_view.mechanism_labels, reader, range(1, step + 1))
             node = dict(step=step, role=role, state='seal_present_unverified')
-            line = ui_view.guarded(lambda: ui_view.role_line(reader, node, clean,
+            line = self._guarded(lambda: ui_view.role_line(reader, node, clean,
                 mechanisms={} if 'error' in mechanisms else mechanisms), clean=clean)
             if 'error' in line:
                 line = dict(node, role_label=label, state_label='已有阶段结论', sealed=False, facts=[], links=[], error=line['error'])
@@ -1042,13 +1149,13 @@ class InstanceUI:
                 'W 的“本阶段实验”是封存观察中已接受的受管调用数，不等于独立实验设计数或科学覆盖。',
                 '本阶段候选按首次观察顺序列出；“最高/最低”只在同一口径内按作者声明方向取值，不代表科学排序。'))
             return 200, render.page('第 ' + str(step) + ' 阶段 · ' + label, body), {}
-        closeout = ui_view.guarded(saved_status.closeout, self.root, clean=clean)
+        closeout = self._guarded(saved_status.closeout, self.root, clean=clean)
         closeout_error = closeout is not None and 'error' in closeout
         closeout = None if closeout_error else closeout
-        mechanisms = ui_view.guarded(ui_view.mechanism_labels, reader, range(1, step + 1))
+        mechanisms = self._guarded(ui_view.mechanism_labels, reader, range(1, step + 1))
         mechanisms = {} if 'error' in mechanisms else mechanisms
-        projection = ui_view.guarded(self._candidates, step, job=job, reader=reader, clean=clean)
-        card = ui_view.guarded(lambda: ui_view.result_card(reader, step, closeout=closeout,
+        projection = self._guarded(self._candidates, step, job=job, reader=reader, clean=clean)
+        card = self._guarded(lambda: ui_view.result_card(reader, step, closeout=closeout,
             projection=None if 'error' in projection else projection, clean=clean), clean=clean)
         delivered = ((closeout or {}).get('last_confirmed') or {}).get('candidate_id')
         files = ''
@@ -1056,7 +1163,7 @@ class InstanceUI:
             if closeout_error:
                 card['delivery_state'], card['delivery_label'] = 'unknown', '交付状态未知'
             chosen = card.get('chosen')
-            member = ui_view.guarded(ui_view.candidate_file, reader, chosen, projection, clean=clean) \
+            member = self._guarded(ui_view.candidate_file, reader, chosen, projection, clean=clean) \
                 if chosen and 'error' not in projection else None
             if member and 'error' not in member:
                 confirmed = ((closeout or {}).get('last_confirmed') or {}).get('artifact_sha256')
@@ -1064,7 +1171,7 @@ class InstanceUI:
                 files += ui.link(kind + '：' + member['name'].rsplit('/', 1)[-1], '/nodes/' + str(member['step']) + '/materials/' + str(member['index']), cls='primary')
                 files += '<p class="note">sha256 ' + ui.esc(member['sha256'][:16]) + '… · 第 ' + ui.esc(member['step']) + ' 阶段研究文件</p>'
             files += ui.link('查看完整原文', '#full-text', cls='secondary-link')
-        rows = ui_view.guarded(lambda: ui_view.candidate_rows(projection, recommended=projection.get('recommended')
+        rows = self._guarded(lambda: ui_view.candidate_rows(projection, recommended=projection.get('recommended')
             if card.get('next_action') == 'audit' else (card.get('chosen') or {}).get('id')
             if 'error' not in card else None, delivered=delivered,
             audits=ui_view.audit_facts(self.root, projection, subject=payload), mechanisms=mechanisms, clean=clean), clean=clean) \
@@ -1072,7 +1179,7 @@ class InstanceUI:
         table = ui.candidate_table(rows, ident='candidates')
         if not final:
             table = ui.Safe('<details class="candidates-fold"><summary>候选比较（本阶段 W 提名及 A 选中）</summary>' + table + '</details>')
-        materials = ui_view.guarded(self._materials_overview, step, reader, clean=clean)
+        materials = self._guarded(self._materials_overview, step, reader, clean=clean)
         section = '<section class="materials" id="materials"><h2>研究文件</h2>'
         if 'error' in materials:
             section += ui.error_inline(materials, what='研究文件清单')
@@ -1124,8 +1231,12 @@ class InstanceUI:
                 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': render.CSP.replace(
                     'script-src ', 'script-src ' + _ENTRY_SCRIPT_SOURCE + ' ', 1)}
         browser_token = self._browser(cookie, scope='read')
-        if self.workspace and parsed.path not in {'/', '/new', '/instances', '/configuration', '/live', '/reading', '/translation/state'}:
+        if self.workspace and parsed.path not in {'/', '/new', '/instances', '/configuration', '/live', '/session', '/reading', '/translation/state'}:
             raise PermissionError('Open an explicit instance to access research pages')
+        if parsed.path == '/session':
+            if parsed.query:
+                raise ValueError('Exact browser session route required')
+            return 200, b'{"authenticated":true}', {'Content-Type': 'application/json; charset=utf-8'}
         if parsed.path in {'/reading', '/translation/state'}:
             if parsed.query:
                 raise ValueError('Exact reading settings route required')
@@ -1163,7 +1274,7 @@ class InstanceUI:
             try:
                 final = self._final_step()
             except Exception as error:  # noqa: BLE001 - name the failure; other pages stay usable
-                failure = ui_view.failure(error, ui_view.cleaner(self.root))
+                failure = self._failure(error)
                 return 200, self._page('最终结果', self._navigation('/final-results') + '<section><h2>最终结论暂不可读</h2>'
                     + ui.error_inline(failure, what='最终结论') + '<a class="primary" href="/results">查看研究过程</a></section>'), {}
             if final is not None:
@@ -1305,7 +1416,7 @@ class InstanceUI:
                 'pause': set(), 'start': set(), 'resume': {'step'}, 'continue': {'ack_correction', 'authorization_note'},
                 'create': {'selection'}, 'load-config': {'config_path'}, 'configure': None,
                 'open': {'root'}, 'configuration': {'config_path', 'config_text', 'mode'},
-                'budget': {'max_tokens', 'max_seconds', 'max_steps', 'authorization_note', 'authorization_statement'},
+                'budget': {'max_tokens', 'max_seconds', 'max_steps', 'authorization_note'},
                 'guidance-submit': {'text', 'target', 'kind', 'scope', 'effective_step'},
                 'guidance-edit': {'guidance_id', 'expected_revision', 'text'},
                 'guidance-revoke': {'guidance_id', 'expected_revision'},
@@ -1313,8 +1424,11 @@ class InstanceUI:
             if action not in schemas:
                 raise ValueError('Unknown instance control')
             form = parse_qs(body.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
+            expected = schemas[action]
+            if action == 'budget' and 'authorization_statement' in form:
+                expected = expected | {'authorization_statement'}
             if (not {'nonce', 'csrf'} <= set(form) or
-                    schemas[action] is not None and set(form) != schemas[action] | {'nonce', 'csrf'} or
+                    expected is not None and set(form) != expected | {'nonce', 'csrf'} or
                     any(len(values) != 1 for values in form.values())):
                 raise ValueError('Control form contains missing or duplicate fields')
             form = {key: values[0] for key, values in form.items()}
@@ -1325,155 +1439,10 @@ class InstanceUI:
                 # A download leaves its source form visible in the browser.
                 if not (action == 'configure' and form.get('mode') == 'export'):
                     self.control_nonce = secrets.token_urlsafe(32)
-            location = '/'
-            if action == 'continue':
-                self._continue(ack_correction=form['ack_correction'] or None,
-                               authorization_note=form['authorization_note'] or None)
-            elif action == 'start':
-                self.control_result = control.start_background(self.root)
-            elif action == 'resume':
-                self.control_result = control.start_background(self.root, resume_step=int(form['step']))
-            elif action == 'pause':
-                self.control_result = control.request_pause(self.root)
-            elif action == 'budget':
-                self.control_result = control.request_budget_amendment(self.root,
-                    max_tokens=int(form['max_tokens']) if form['max_tokens'] else None,
-                    max_seconds=float(form['max_seconds']) if form['max_seconds'] else None,
-                    max_steps=int(form['max_steps']) if form['max_steps'] else None,
-                    authorization_note=form['authorization_note'],
-                    authorization_statement=form['authorization_statement'] or None)
-                location = '/operations'
-            elif action.startswith('guidance-'):
-                if action == 'guidance-submit':
-                    user_guidance.submit(self.root, form['text'], target=form['target'], kind=form['kind'],
-                        scope=form['scope'], effective_step=int(form['effective_step']) if form['effective_step'] else None)
-                elif action == 'guidance-edit':
-                    user_guidance.edit(self.root, form['guidance_id'], form['text'], expected_revision=int(form['expected_revision']))
-                else:
-                    user_guidance.revoke(self.root, form['guidance_id'], expected_revision=int(form['expected_revision']))
-                location = '/guidance'
-            elif action == 'open':
-                selected = Path(form['root']).expanduser().resolve()
-                display.settings(selected)  # Explicit existing root, never an inferred directory choice.
-                if selected not in self.instance_roots:
-                    self.instance_roots.append(selected)
-                index = self.instance_roots.index(selected)
-                if index:
-                    child = self._child(index)
-                    location = '/instances/' + str(index) + '/manage?token=' + child.management_token
-                else:
-                    location = '/'
-            elif action == 'load-config':
-                return self._import_config(browser_token, form['config_path'])
-            elif action == 'configure':
-                mode = form.get('mode')
-                if mode not in {'preview', 'export', 'save'}:
-                    raise ValueError('Select an explicit configuration action')
-                fields = {key: value for key, value in form.items() if key not in {'nonce', 'csrf', 'selection', 'save_path', 'mode'}}
-                selected = self._selected_config(browser_token, form['selection']) if form.get('selection') else None
-                source = selected['source'] if selected else None
-                if self._config_changed(source):
-                    return self._import_config(browser_token, source['path'], notice='原配置或任务已变化，请重新检查并确认。')
-                base = selected['draft']['base'] if selected else self.root
-                draft = selected['draft'] if selected else configuration_form.blank(base=base)
-                try:
-                    draft = configuration_form.parse(fields, base=base)
-                    self._draft_task(draft)
-                except (OSError, ValueError, TypeError, KeyError) as error:
-                    draft = getattr(error, 'draft', draft)
-                    selection = self._remember_config(browser_token, draft, source=source)
-                    return self._new_research_page(browser_token, draft=draft, selection=selection,
-                        notice=public_output.cleaner(self.root, settings={})(str(error)))
-                if mode == 'export':
-                    text = configuration_form.export_toml(draft)
-                    return 200, text.encode('utf-8'), {'Content-Type': 'application/toml; charset=utf-8',
-                        'Content-Disposition': 'attachment; filename="research.toml"'}
-                if mode == 'save':
-                    path = Path(form.get('save_path', '')).expanduser().absolute()
-                    if path.suffix.lower() != '.toml' or path.resolve() == self.secret_file:
-                        raise ValueError('Select a research TOML declaration file')
-                    if path.exists() or path.is_symlink():
-                        c.regular(path, limit=256000)
-                    text = configuration_form.export_toml(draft)
-                    if len(text.encode('utf-8')) > 256000:
-                        raise ValueError('Research TOML exceeds its byte budget')
-                    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
-                    with os.fdopen(descriptor, 'w', encoding='utf-8') as destination:
-                        destination.write(text)
-                    return self._import_config(browser_token, path, notice='配置已保存。创建实例前请检查并预览。')
-                try:
-                    task_source = self._draft_task(draft)
-                    preview = configuration_form.preview(draft)
-                    if self._draft_task(draft) != task_source:
-                        raise ValueError('任务原文已变化，请重新检查并预览。')
-                except (OSError, ValueError, TypeError, KeyError) as error:
-                    selection = self._remember_config(browser_token, draft, source=source)
-                    return self._new_research_page(browser_token, draft=draft, selection=selection,
-                        notice=public_output.cleaner(self.root, settings={})(str(error)))
-                selection = self._remember_config(browser_token, draft, source=source, previewed=True, task_source=task_source)
-                return self._new_research_page(browser_token, draft=draft, selection=selection, preview=preview)
-            elif action == 'create':
-                selected = self._selected_config(browser_token, form['selection'])
-                if not selected['previewed']:
-                    raise ValueError('请先检查并预览本次研究配置。')
-                source = selected['source']
-                if self._config_changed(source):
-                    return self._import_config(browser_token, source['path'], notice='原配置或任务已变化，请重新检查并确认。')
-                draft = selected['draft']
-                if self._draft_task(draft) != selected['task_source']:
-                    task_source = self._draft_task(draft)
-                    preview = configuration_form.preview(draft)
-                    if self._draft_task(draft) != task_source:
-                        raise ValueError('任务原文已变化，请重新检查并预览。')
-                    selection = self._remember_config(browser_token, draft, source=source, previewed=True, task_source=task_source)
-                    return self._new_research_page(browser_token, draft=draft, selection=selection,
-                        preview=preview, notice='任务原文已变化，请重新确认后创建。')
-                configuration_form.create(draft)
-                root = Path(selected['draft']['document']['research']['root']).expanduser()
-                selected_root = (Path(selected['draft']['base']) / root).resolve() if not root.is_absolute() else root.resolve()
-                self.config_selections.pop(browser_token, None)
-                if selected_root not in self.instance_roots:
-                    self.instance_roots.append(selected_root)
-                index = self.instance_roots.index(selected_root)
-                child = self._child(index)
-                location = '/instances/' + str(index) + '/manage?token=' + child.management_token
-            elif action == 'configuration':
-                path = Path(form['config_path']).expanduser().absolute()
-                if path.suffix.lower() != '.toml' or path.resolve() == self.secret_file:
-                    raise ValueError('Select a research TOML declaration file')
-                if path.exists() or path.is_symlink():
-                    c.regular(path, limit=256000)
-                path = path.resolve()
-                text, mode = form['config_text'], form['mode']
-                if mode not in {'load', 'check', 'save', 'prepare'}:
-                    raise ValueError('Select an explicit TOML action')
-                if not text or mode == 'load':
-                    text = c.regular(path, limit=256000).read_text(encoding='utf-8')
-                if len(text.encode()) > 256000:
-                    raise ValueError('Research TOML exceeds its byte budget')
-                result = dict(status='config_loaded')
-                if mode in {'check', 'prepare'}:
-                    # Draft editing remains available before the declaration
-                    # is valid. Only check/prepare enter scientific validation.
-                    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.toml', dir=path.parent) as source:
-                        source.write(text); source.flush()
-                        options = research_config.load(source.name)
-                    checked = research_config.prepare(**options, validate_only=True)
-                    result = public_output.settings_view(checked)
-                    result['source'] = 'research_config'
-                if mode == 'save':
-                    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
-                    with os.fdopen(descriptor, 'w', encoding='utf-8') as destination:
-                        destination.write(text)
-                    result = dict(status='config_saved')
-                elif mode == 'prepare':
-                    prepared = research_config.prepare(**options)
-                    selected = Path(options['root']).resolve()
-                    if selected not in self.instance_roots:
-                        self.instance_roots.append(selected)
-                    result = dict(status='prepared', goal_id=prepared['goal_id'])
-                return self._configuration_page(browser_token, text=text, path=str(path), result=result)
-            return 303, b'', {'Location': location}
+            try:
+                return self._control_post(browser_token, action, form)
+            except Exception as error:
+                return self._control_error(browser_token, action, form, error)
         if not self.approvals:
             raise ValueError('Execution approval routes are unavailable for this instance')
         if (parsed.scheme or parsed.netloc or parsed.query or parsed.fragment or len(parts) != 3
@@ -1495,6 +1464,179 @@ class InstanceUI:
                 raise PermissionError('Execution revocation CSRF or nonce mismatch')
             authority.revoke(self.root, parts[1], secret=self.secret, reason=form['rationale'])
         return 303, b'', {'Location': '/requests/' + parts[1]}
+
+
+    def _control_post(self, browser_token, action, form):
+        def integer(field, *, optional=False):
+            try:
+                return int(form[field]) if form[field] or not optional else None
+            except ValueError:
+                raise ui_errors.InputError(field, '此字段必须填写整数。', '修改此字段后重新提交。') from None
+
+        location = '/'
+        if action == 'continue':
+            self._continue(ack_correction=form['ack_correction'] or None,
+                           authorization_note=form['authorization_note'] or None)
+        elif action == 'start':
+            self.control_result = control.start_background(self.root)
+        elif action == 'resume':
+            self.control_result = control.start_background(self.root, resume_step=integer('step'))
+        elif action == 'pause':
+            self.control_result = control.request_pause(self.root)
+        elif action == 'budget':
+            values = {}
+            for key, convert, message in [('max_tokens', int, 'max_tokens must be a positive integer'),
+                    ('max_seconds', float, 'max_seconds must be positive and finite'),
+                    ('max_steps', int, 'max_steps must be a positive integer')]:
+                try:
+                    values[key] = convert(form[key]) if form[key] else None
+                except ValueError:
+                    raise ValueError(message) from None
+            self.control_result = control.request_budget_amendment(self.root,
+                **values,
+                authorization_note=form['authorization_note'],
+                authorization_statement=form['authorization_statement'] if form.get('authorization_statement', '').strip() else (
+                    form['authorization_note'] if values['max_steps'] is not None else None))
+            location = '/operations'
+        elif action.startswith('guidance-'):
+            if action == 'guidance-submit':
+                user_guidance.submit(self.root, form['text'], target=form['target'], kind=form['kind'],
+                    scope=form['scope'], effective_step=integer('effective_step', optional=True))
+            elif action == 'guidance-edit':
+                user_guidance.edit(self.root, form['guidance_id'], form['text'], expected_revision=integer('expected_revision'))
+            else:
+                user_guidance.revoke(self.root, form['guidance_id'], expected_revision=integer('expected_revision'))
+            location = '/guidance'
+        elif action == 'open':
+            selected = Path(form['root']).expanduser().resolve()
+            selected.stat()  # A missing chosen instance is a 404, not a type error.
+            display.settings(selected)  # Explicit existing root, never an inferred directory choice.
+            if selected not in self.instance_roots:
+                self.instance_roots.append(selected)
+            index = self.instance_roots.index(selected)
+            if index:
+                child = self._child(index)
+                location = '/instances/' + str(index) + '/manage?token=' + child.management_token
+            else:
+                location = '/'
+        elif action == 'load-config':
+            return self._import_config(browser_token, form['config_path'])
+        elif action == 'configure':
+            mode = form.get('mode')
+            if mode not in {'preview', 'export', 'save'}:
+                raise ValueError('Select an explicit configuration action')
+            fields = {key: value for key, value in form.items() if key not in {'nonce', 'csrf', 'selection', 'save_path', 'mode'}}
+            selected = self._selected_config(browser_token, form['selection']) if form.get('selection') else None
+            source = selected['source'] if selected else None
+            if self._config_changed(source):
+                return self._import_config(browser_token, source['path'], notice='原配置或任务已变化，请重新检查并确认。')
+            base = selected['draft']['base'] if selected else self.root
+            draft = selected['draft'] if selected else configuration_form.blank(base=base)
+            try:
+                draft = configuration_form.parse(fields, base=base)
+                self._draft_task(draft)
+            except Exception as error:
+                draft = getattr(error, 'draft', draft)
+                selection = self._remember_config(browser_token, draft, source=source)
+                return self._new_research_page(browser_token, draft=draft, selection=selection,
+                    notice=self._problem(error, context='configuration'), save_path=form.get('save_path', ''))
+            if mode == 'export':
+                text = configuration_form.export_toml(draft)
+                return 200, text.encode('utf-8'), {'Content-Type': 'application/toml; charset=utf-8',
+                    'Content-Disposition': 'attachment; filename="research.toml"'}
+            if mode == 'save':
+                path = Path(form.get('save_path', '')).expanduser().absolute()
+                if path.suffix.lower() != '.toml' or path.resolve() == self.secret_file:
+                    raise ValueError('Select a research TOML declaration file')
+                if path.exists() or path.is_symlink():
+                    c.regular(path, limit=256000)
+                text = configuration_form.export_toml(draft)
+                if len(text.encode('utf-8')) > 256000:
+                    raise ValueError('Research TOML exceeds its byte budget')
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(descriptor, 'w', encoding='utf-8') as destination:
+                    destination.write(text)
+                return self._import_config(browser_token, path, notice='配置已保存。创建实例前请检查并预览。')
+            try:
+                task_source = self._draft_task(draft)
+                preview = configuration_form.preview(draft)
+                if self._draft_task(draft) != task_source:
+                    raise ValueError('任务原文已变化，请重新检查并预览。')
+            except Exception as error:
+                selection = self._remember_config(browser_token, draft, source=source)
+                return self._new_research_page(browser_token, draft=draft, selection=selection,
+                    notice=self._problem(error, context='configuration'), save_path=form.get('save_path', ''))
+            selection = self._remember_config(browser_token, draft, source=source, previewed=True, task_source=task_source)
+            return self._new_research_page(browser_token, draft=draft, selection=selection, preview=preview)
+        elif action == 'create':
+            selected = self._selected_config(browser_token, form['selection'])
+            if not selected['previewed']:
+                raise ValueError('请先检查并预览本次研究配置。')
+            source = selected['source']
+            if self._config_changed(source):
+                return self._import_config(browser_token, source['path'], notice='原配置或任务已变化，请重新检查并确认。')
+            draft = selected['draft']
+            if self._draft_task(draft) != selected['task_source']:
+                task_source = self._draft_task(draft)
+                preview = configuration_form.preview(draft)
+                if self._draft_task(draft) != task_source:
+                    raise ValueError('任务原文已变化，请重新检查并预览。')
+                selection = self._remember_config(browser_token, draft, source=source, previewed=True, task_source=task_source)
+                return self._new_research_page(browser_token, draft=draft, selection=selection,
+                    preview=preview, notice='任务原文已变化，请重新确认后创建。')
+            configuration_form.create(draft)
+            root = Path(selected['draft']['document']['research']['root']).expanduser()
+            selected_root = (Path(selected['draft']['base']) / root).resolve() if not root.is_absolute() else root.resolve()
+            self.config_selections.pop(browser_token, None)
+            if selected_root not in self.instance_roots:
+                self.instance_roots.append(selected_root)
+            index = self.instance_roots.index(selected_root)
+            child = self._child(index)
+            location = '/instances/' + str(index) + '/manage?token=' + child.management_token
+        elif action == 'configuration':
+            path = Path(form['config_path']).expanduser().absolute()
+            if path.suffix.lower() != '.toml' or path.resolve() == self.secret_file:
+                raise ValueError('Select a research TOML declaration file')
+            if path.exists() or path.is_symlink():
+                c.regular(path, limit=256000)
+            path = path.resolve()
+            text, mode = form['config_text'], form['mode']
+            if mode not in {'load', 'check', 'save', 'prepare'}:
+                raise ValueError('Select an explicit TOML action')
+            if not text or mode == 'load':
+                text = c.regular(path, limit=256000).read_text(encoding='utf-8')
+            if len(text.encode()) > 256000:
+                raise ValueError('Research TOML exceeds its byte budget')
+            result = dict(status='config_loaded')
+            if mode in {'check', 'prepare'}:
+                # Draft editing remains available before the declaration
+                # is valid. Only check/prepare enter scientific validation.
+                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.toml', dir=path.parent) as source:
+                    source.write(text); source.flush()
+                    options = research_config.load(source.name)
+                checked = research_config.prepare(**options, validate_only=True)
+                result = public_output.settings_view(checked)
+                result['source'] = 'research_config'
+            if mode == 'save':
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(descriptor, 'w', encoding='utf-8') as destination:
+                    destination.write(text)
+                result = dict(status='config_saved')
+            elif mode == 'prepare':
+                prepared = research_config.prepare(**options)
+                selected = Path(options['root']).resolve()
+                if selected not in self.instance_roots:
+                    self.instance_roots.append(selected)
+                result = dict(status='prepared', goal_id=prepared['goal_id'])
+            return self._configuration_page(browser_token, text=text, path=str(path), result=result)
+        if action in {'start', 'resume', 'continue', 'pause', 'budget'}:
+            receipt = self.control_result or {}
+            result = receipt.get('result') or {}
+            if receipt.get('status') == 'failed' or result.get('status') in {
+                    'native_stopped', 'native_outcome_unsealed', 'seal_pending', 'output_repair_required',
+                    'output_repair_unavailable'}:
+                raise ui_errors.ControlFailure('Control receipt failure: ' + json.dumps(receipt, ensure_ascii=False))
+        return 303, b'', {'Location': location}
 
 
 def serve(root, *, secret_file, port=None, instance_roots=(), workspace=False, translation_config=None):
@@ -1531,17 +1673,14 @@ def serve(root, *, secret_file, port=None, instance_roots=(), workspace=False, t
                 status, body, headers = result
                 if isinstance(body,(science.Original, display.Original)):
                     body.check()
-            except (PermissionError, ValueError, OSError, KeyError, TypeError, RuntimeError) as error:
-                if isinstance(body,(science.Original, display.Original)):body.close()
-                if isinstance(error, BrowserAccessDenied):
-                    status, body, headers = 403, ui._page('请重新打开工作台入口',
-                        '<p>未能建立有效的本地浏览会话。</p>'
-                        '<p>请回到启动工作台的终端，打开本次输出的 <code>management_url</code> 完整链接。'
-                        '若仍无法进入，请确认浏览器允许此本地网页保存 Cookie。</p>', live=False), {}
-                else:
-                    status, body, headers = (409 if isinstance(error, RuntimeError) else 403), ui._page(
-                        '此操作暂时无法完成', '<p>' + html.escape(public_output.cleaner(root,
-                            settings={} if workspace else display.settings(root))(str(error))) + '</p>'), {}
+            except Exception as error:
+                if isinstance(body, (science.Original, display.Original)):
+                    body.close()
+                status, body, headers = ui._error_response(error, self.path,
+                    json_response=(self.headers.get('Content-Type') == 'application/json'
+                        or '/translation/state' in self.path.partition('?')[0]
+                        or self.path.partition('?')[0].endswith('/session')
+                        or '/events' in self.path.partition('?')[0]))
             try:
                 self.send_response(status)
                 self.send_header('Content-Type', headers.pop('Content-Type', 'text/html; charset=utf-8'))

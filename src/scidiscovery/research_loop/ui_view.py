@@ -13,7 +13,7 @@ import re
 import time
 
 from . import contracts as c, instance_display as display
-from . import public_output
+from . import native_usage, public_output
 
 ROLE_LABELS = {'H': 'H · 假设', 'W': 'W · 实验', 'A': 'A · 综合评估', 'E': 'E · 证据'}
 ROLE_VERBS = {'H': 'H 正在提出假设', 'W': 'W 正在实验', 'A': 'A 正在综合评估', 'E': 'E 正在整理证据'}
@@ -544,6 +544,34 @@ def exhausted_limits(view, used_steps):
 
 # ---------------------------------------------------------------- usage
 
+def token_details(usage, context=None):
+    """Shared overview and exact-attempt labels; context is never accumulated."""
+    meter = native_usage.tokens(usage)
+    details = []
+    for key, label in [('input_tokens', '输入'), ('cached_input_tokens', '缓存输入'),
+                       ('noncached_input_tokens', '非缓存输入'), ('output_tokens', '输出')]:
+        value = (dict(meter, **native_usage.breakdown(meter)).get(key) if meter is not None else None)
+        details.append(dict(label=label, value=fmt_int(value) if value is not None else '不可用'))
+    hit = native_usage.breakdown(meter).get('cache_hit_ratio')
+    details.append(dict(label='缓存命中率', value=f'{hit:.1%}' if hit is not None else '不可用'))
+    telemetry = native_usage.context(context)
+    label = '最近一次上报上下文'
+    if isinstance(context, dict) and type(context.get('step')) is int and type(context.get('attempt')) is int:
+        label += f'（阶段 {context["step"]} / attempt {context["attempt"]}）'
+    if telemetry['status'] == 'last_reported':
+        value = f'{fmt_int(telemetry["total_tokens"])} / {fmt_int(telemetry["model_context_window"])} · {telemetry["ratio"]:.1%}'
+        stamp = telemetry.get('reported_at')
+        age = time.time() - stamp if stamp is not None else None
+        value += '；' + (f'上报于 {fmt_duration(age)}前' if age is not None and age >= 0 else '上报时间未知')
+    else:
+        value = '不可用（后端未提供完整遥测或观测异常）'
+    details.append(dict(label=label, value=value))
+    if usage.get('measurement_status'):
+        details.append(dict(label='计量状态', value=usage['measurement_status']))
+    details.append(dict(label='观测限制', value='运行中请求与平台上报延迟未计入；缓存为后端已记录值'))
+    return details
+
+
 def usage_stats(view, *, used_steps=None, candidates=None):
     budget = view.get('budget') or {}
     usage = view.get('usage') or {}
@@ -551,7 +579,7 @@ def usage_stats(view, *, used_steps=None, candidates=None):
     observed = usage.get('observed_tokens')
     limit = budget.get('max_tokens')
     tokens = dict(label='模型用量（tokens）', value=fmt_tokens(observed), limit=fmt_tokens(limit) if limit else '未记录',
-                  raw=observed, raw_limit=limit, notes=[])
+                  raw=observed, raw_limit=limit, notes=[], details=token_details(usage, usage.get('context')))
     tokens['percent'] = percent(observed, limit)
     overrun = closeout.get('final_overrun') if isinstance(closeout.get('final_overrun'), dict) else None
     over = observed is not None and limit and observed > limit

@@ -83,11 +83,17 @@ class RuntimePluginFactory:
 
     build: Callable[[RuntimePluginContext], RuntimePluginContribution]
     archive_storage: Callable[[RuntimePluginContext], Mapping[str, ArchiveStorage]] | None = None
+    configure: Callable[..., dict] | None = None
+    requires_config_file: bool = False
     def __post_init__(self) -> None:
         if not callable(self.build):
             raise TypeError("runtime plugin factory must be callable")
         if self.archive_storage is not None and not callable(self.archive_storage):
             raise TypeError("runtime plugin archive storage factory must be callable")
+        if self.configure is not None and not callable(self.configure):
+            raise TypeError("runtime plugin configuration callback must be callable")
+        if type(self.requires_config_file) is not bool:
+            raise TypeError("runtime plugin requires_config_file must be boolean")
 
 
 __all__ = [

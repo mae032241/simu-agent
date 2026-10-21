@@ -370,10 +370,12 @@ def _managed_tcad_case(tmp_path, *, retirement=False):
         mechanism_ref=None, handoff_protocol=CURRENT)
     config = dict(transport='socket', socket_path=str(tmp_path / 'unused.socket'),
         scope=scope, record_dir=str(tmp_path / 'records'), native_attempt=dict(number=0),
-        admission=dict(version=1, mode='hard'), execution_interface=dict(
-            # Trusted DI boundary only; this does not claim a real core freeze.
-            version=e.VERSION, code=[e.proof(Path(__file__).resolve())],
-            observation_version=1, terminal_evidence='adapter_result', result_protocol=None))
+        admission=dict(version=1, mode='hard'))
+    # Trusted DI boundary only; this does not claim a real core freeze.
+    config['execution_interface'] = dict(version=e.VERSION, executor='tcad_execution:tcad',
+        observation_version=e.OBSERVATION_VERSION, terminal_evidence='adapter_result', result_protocol=None,
+        config_sha256=hashlib.sha256(e.encoded(config)).hexdigest(),
+        capabilities=vars(TCADManagedExecution.lifecycle_capabilities()))
     raw = canonical_json(_small_resolved_execution_package().model_dump(mode='json'))
     source = tmp_path / 'execution-package.json'
     source.write_bytes(raw)

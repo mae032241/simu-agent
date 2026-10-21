@@ -25,13 +25,53 @@ try:
 except ImportError:  # Python 3.10
     import tomli as tomllib
 
-from . import backends
+from . import backends, ui_errors
 
 
 _RULES = "field-translation-v1"
 _MAX_OUTPUT = 1024 * 1024
 _FAILED = "Translation did not complete. Request a retry explicitly."
-_INVALID = "Translation response was invalid. Request a retry explicitly."
+_MAX_STDERR = 8192
+_MAX_NATIVE_ERROR = 4096
+_FAILURES = {
+    "model_rejected": "翻译模型不可用或名称不受支持。请在阅读与翻译中核对模型名称和账号权限，再手动重试。",
+    "authentication": "翻译服务认证失败。请检查本机启动器的登录状态或凭据，再手动重试。",
+    "network": "翻译服务连接失败。请检查本机网络、代理和服务地址，再手动重试。",
+    "rate_limit": "翻译服务限流或额度不足。请检查服务额度，等待后手动重试。",
+    "timeout": "翻译请求超时。可在阅读与翻译中增加超时时间，核对原请求后手动重试。",
+    "response_invalid": "翻译响应格式无效。请核对启动器是否支持要求的 JSON 响应，再手动重试。",
+    "launcher_unavailable": "翻译启动命令不可用。请检查本机启动器安装、命令路径和执行权限。",
+    "backend_exit": "翻译后端异常退出。请按诊断编号检查本机记录，修正原因后手动重试。",
+    "backend_error": "翻译后端报告失败。请按诊断编号检查本机记录，修正原因后手动重试。",
+    "missing_completion": "翻译后端未报告完成。请核对启动器协议和原请求状态，再手动重试。",
+    "output_limit": "翻译输出超过大小上限。请减少待翻译字段后手动重试。",
+    "tool_action": "翻译后端尝试了不允许的工具操作。请检查翻译启动器配置，再手动重试。",
+    "cancelled": "翻译服务已关闭，本次请求未完成。重新打开工作台并核对原请求后手动重试。",
+    "cache_write": "翻译缓存保存失败。请检查工作台目录写入权限和剩余磁盘空间后手动重试。",
+    "internal_error": "翻译处理失败。请按诊断编号检查本机记录，修正原因后手动重试。",
+}
+
+
+def _failure_kind(details, fallback):
+    # Match private diagnostics only to fixed categories, never echo their text.
+    text = details.lower()
+    if any(token in text for token in ("model_not_found", "unsupported_model", "invalid_model", "model does not exist",
+            "model is not supported", "model is not available", "model not found", "not a valid model")):
+        return "model_rejected"
+    if "model" in text and any(token in text for token in ("not supported", "does not exist", "not available", "do not have access")):
+        return "model_rejected"
+    if any(token in text for token in ("authentication", "unauthorized", "invalid_api_key", "invalid api key", "login required", "not logged in", "401")):
+        return "authentication"
+    if any(token in text for token in ("rate_limit", "rate limit", "too many requests", "insufficient_quota", "quota exceeded", "429")):
+        return "rate_limit"
+    if any(token in text for token in ("connection refused", "connection reset", "failed to connect", "network is unreachable",
+            "network error", "dns", "proxy error", "error sending request", "connecterror")):
+        return "network"
+    if any(token in text for token in ("timed out", "timeout")):
+        return "timeout"
+    return fallback
+
+
 _OPTIONS = {"backend", "launcher_argv", "model", "target_language", "reasoning_effort",
             "service_tier", "timeout_seconds", "enabled"}
 _INSTRUCTION = (
@@ -121,9 +161,12 @@ def _texts(values):
 
 
 class _TranslationError(Exception):
-    def __init__(self, message, usage=None):
-        super().__init__(message)
+    """Private cause plus a host-authored public category; never expose str(exc)."""
+
+    def __init__(self, code, usage=None, *, details=None):
+        self.code = code if code in _FAILURES else "internal_error"
         self.usage = usage
+        super().__init__(details or _FAILURES[self.code])
 
 
 class TranslationService:
@@ -294,16 +337,16 @@ class TranslationService:
                 translations, usage = self._translate(config, sources)
                 if (not isinstance(translations, list) or len(translations) != len(sources)
                         or any(not isinstance(text, str) for text in translations)):
-                    raise _TranslationError(_INVALID, usage)
+                    raise _TranslationError("response_invalid", usage)
                 try:
                     for text in translations:
                         text.encode("utf-8")
                 except UnicodeEncodeError:
-                    raise _TranslationError(_INVALID, usage) from None
+                    raise _TranslationError("response_invalid", usage) from None
             except _TranslationError as exc:
-                translations, error, usage = None, str(exc), exc.usage
-            except Exception:
-                translations, error = None, _FAILED
+                translations, error, usage = None, self._failure(exc), exc.usage
+            except Exception as exc:
+                translations, error = None, self._failure(exc)
             with self._condition:
                 try:
                     with self._db:
@@ -314,13 +357,20 @@ class TranslationService:
                         self._db.execute("INSERT INTO translation_invocations(profile, created, status, usage) VALUES (?, ?, ?, ?)",
                             (profile, time.time(), "completed" if translations is not None else "failed",
                              json.dumps(usage, sort_keys=True) if usage is not None else None))
-                except sqlite3.Error:
+                except sqlite3.Error as exc:
+                    error = self._failure(exc, code="cache_write")
                     for source in sources:
-                        self._errors[(profile, source)] = "Translation cache could not be saved. Request a retry explicitly."
+                        self._errors[(profile, source)] = error
                 finally:
                     for source in sources:
                         self._inflight.discard((profile, source))
                 self._condition.notify_all()
+
+    def _failure(self, error, *, code=None):
+        code = code or (error.code if isinstance(error, _TranslationError) else "internal_error")
+        reference = ui_errors.record(self.directory.parent, error, context="translation")
+        message = _FAILURES[code] + " [translation_" + code + "]"
+        return message + ("（诊断编号：" + reference + "）" if reference else "（诊断未能保存，请检查工作台目录写入权限。）")
 
     def _translate(self, config, texts):
         settings = backends.configuration(config["backend"], config["launcher_argv"],
@@ -343,22 +393,22 @@ class TranslationService:
             request = adapter.request(prompt, profile=profile, work=work, schema=schema_path)
             result, usage = self._invoke(adapter, args, request, work, pending, config["timeout_seconds"])
         if not isinstance(result, dict) or set(result) != {"translations"} or not isinstance(result["translations"], list):
-            raise _TranslationError(_INVALID, usage)
+            raise _TranslationError("response_invalid", usage)
         mapped = {}
         for row in result["translations"]:
             if (not isinstance(row, dict) or set(row) != {"id", "text"}
                     or not isinstance(row["id"], str) or row["id"] in mapped
                     or not isinstance(row["text"], str) or len(row["text"]) > 48000):
-                raise _TranslationError(_INVALID, usage)
+                raise _TranslationError("response_invalid", usage)
             mapped[row["id"]] = row["text"]
         if set(mapped) != {field["id"] for field in fields}:
-            raise _TranslationError(_INVALID, usage)
+            raise _TranslationError("response_invalid", usage)
         return [mapped[field["id"]] for field in fields], usage
 
     def _invoke(self, adapter, args, request, work, pending, timeout):
         process, usage = None, None
         result, completed = None, False
-        output, total = bytearray(), 0
+        output, stderr, native_errors, total = bytearray(), bytearray(), bytearray(), 0
         deadline = time.monotonic() + timeout
 
         def consume(line):
@@ -370,7 +420,12 @@ class TranslationService:
                 item = value.get("item")
                 if value.get("type") == "tool" or (isinstance(item, dict) and item.get("type") in
                         {"command_execution", "mcp_tool_call", "web_search", "file_change"}):
-                    raise _TranslationError("Translation attempted a tool action. Request a retry explicitly.", usage)
+                    raise _TranslationError("tool_action", usage)
+                # Native Codex failures are deliberately not normalized by the
+                # scientific adapter. Keep their original bounded evidence here.
+                if value.get("type") in {"error", "turn.failed"}:
+                    native_errors.extend(line + b"\n")
+                    del native_errors[:-_MAX_NATIVE_ERROR]
                 event = adapter.event(value)
                 if "result" in event:
                     if result is not None:
@@ -381,33 +436,35 @@ class TranslationService:
                 observed = event.get("usage") or event.get("live_usage")
                 if observed is not None:
                     usage = observed
-            except (ValueError, TypeError, KeyError):
-                raise _TranslationError(_INVALID, usage) from None
+            except (ValueError, TypeError, KeyError) as exc:
+                raise _TranslationError("response_invalid", usage,
+                    details="Invalid translation event: " + repr(line[-4096:])) from exc
 
         try:
             with self._condition:
                 if self._closed:
-                    raise _TranslationError(_FAILED)
+                    raise _TranslationError("cancelled")
                 try:
                     process = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL, start_new_session=True)
-                except OSError:
-                    raise _TranslationError("Translation launcher is unavailable. Check application settings.") from None
+                        stderr=subprocess.PIPE, start_new_session=True)
+                except OSError as exc:
+                    raise _TranslationError("launcher_unavailable", details=str(exc)) from exc
                 self._process = process
                 self._condition.notify_all()
             with selectors.DefaultSelector() as selector:
-                os.set_blocking(process.stdin.fileno(), False)
-                os.set_blocking(process.stdout.fileno(), False)
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    os.set_blocking(stream.fileno(), False)
                 selector.register(process.stdin, selectors.EVENT_WRITE)
                 selector.register(process.stdout, selectors.EVENT_READ)
+                selector.register(process.stderr, selectors.EVENT_READ)
                 sent = 0
                 while selector.get_map():
                     if self._closed:
-                        raise _TranslationError(_FAILED, usage)
+                        raise _TranslationError("cancelled", usage)
                     if time.monotonic() >= deadline:
-                        raise _TranslationError("Translation timed out. Request a retry explicitly.", usage)
+                        raise _TranslationError("timeout", usage)
                     if pending.exists() and pending.stat().st_size > _MAX_OUTPUT:
-                        raise _TranslationError("Translation output exceeded the application limit.", usage)
+                        raise _TranslationError("output_limit", usage)
                     for selected, _ in selector.select(min(0.05, max(0, deadline - time.monotonic()))):
                         stream = selected.fileobj
                         if stream is process.stdin:
@@ -420,6 +477,13 @@ class TranslationService:
                                 stream.close()
                         else:
                             chunk = os.read(stream.fileno(), 65536)
+                            if stream is process.stderr:
+                                if not chunk:
+                                    selector.unregister(stream)
+                                else:
+                                    stderr.extend(chunk)
+                                    del stderr[:-_MAX_STDERR]
+                                continue
                             if not chunk:
                                 selector.unregister(stream)
                                 if output.strip():
@@ -428,7 +492,7 @@ class TranslationService:
                                 continue
                             total += len(chunk)
                             if total > _MAX_OUTPUT:
-                                raise _TranslationError("Translation output exceeded the application limit.", usage)
+                                raise _TranslationError("output_limit", usage)
                             output.extend(chunk)
                             while b"\n" in output:
                                 line, _, rest = output.partition(b"\n")
@@ -437,28 +501,41 @@ class TranslationService:
                                     consume(line)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise _TranslationError("Translation timed out. Request a retry explicitly.", usage)
+                    raise _TranslationError("timeout", usage)
                 try:
                     code = process.wait(timeout=remaining)
-                except subprocess.TimeoutExpired:
-                    raise _TranslationError("Translation timed out. Request a retry explicitly.", usage) from None
-                if code != 0 or not completed:
-                    raise _TranslationError(_FAILED, usage)
+                except subprocess.TimeoutExpired as exc:
+                    raise _TranslationError("timeout", usage) from exc
+                if native_errors or code != 0 or not completed:
+                    details = (native_errors + stderr).decode("utf-8", errors="replace")
+                    fallback = "backend_error" if native_errors else "backend_exit" if code != 0 else "missing_completion"
+                    raise _TranslationError(_failure_kind(details, fallback), usage)
                 if result is None and adapter.name == "codex":
                     if not pending.is_file() or pending.stat().st_size > _MAX_OUTPUT:
-                        raise _TranslationError(_INVALID, usage)
+                        raise _TranslationError("response_invalid", usage)
                     try:
                         result = json.loads(pending.read_text("utf-8"))
-                    except (OSError, ValueError):
-                        raise _TranslationError(_INVALID, usage) from None
+                    except (OSError, ValueError) as exc:
+                        raise _TranslationError("response_invalid", usage) from exc
                 return result, usage
+        except _TranslationError as exc:
+            # No launcher argv, prompt or config is copied to diagnostics. The
+            # backend may include private information in its own failure output.
+            details = dict(cause=str(exc), returncode=process.poll() if process is not None else None,
+                completed=completed, native_errors=native_errors.decode("utf-8", errors="replace"),
+                stderr_tail=stderr.decode("utf-8", errors="replace"))
+            # Leave room for traceback metadata in the shared 16 KiB record,
+            # including JSON escaping and invalid UTF-8 replacement characters.
+            while len((encoded := json.dumps(details, ensure_ascii=False)).encode("utf-8")) > 8192:
+                key = max(("cause", "native_errors", "stderr_tail"), key=lambda key: len(details[key]))
+                details[key] = details[key][len(details[key]) // 2:]
+            raise _TranslationError(exc.code, usage, details=encoded) from None
         finally:
             if process is not None:
                 self._terminate(process)
-                if process.stdin is not None:
-                    process.stdin.close()
-                if process.stdout is not None:
-                    process.stdout.close()
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
             with self._condition:
                 if self._process is process:
                     self._process = None

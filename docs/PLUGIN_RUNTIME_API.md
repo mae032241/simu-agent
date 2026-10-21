@@ -21,6 +21,21 @@ declared qualification, execution permissions and budgets still apply.
 
 ## Declaration and injected callback contracts
 
+Execution factories may declare `RuntimePluginFactory.configure(config, source, *, binding)`
+and `requires_config_file=True`. The callback receives the bounded JSON/TOML
+object and its original `Path` (or `None` for supported inline configuration),
+and the selected binding, and returns effective JSON settings. It owns binding/schema validation and relative
+references; it must perform only local reads, without constructing adapters,
+creating state directories, starting subprocesses or contacting services.
+The framework discovers the existing execution registration, loads the selected
+file, calls this hook and freezes the resulting `executor`/`configuration` pair.
+There is no additional plugin registry. Missing required files fail before
+instance creation. `PluginConfigurationError` supplies safe `code`,
+`public_message`, `field_path`, `hint` and `plugin_id` diagnostics; authored
+messages must exclude configuration values and credentials. Existing frozen
+settings do not reopen the original top-level file or rerun this callback.
+Runtime adapter initialization continues through the factory's existing `build`.
+
 These are retained library contracts for callers that supply a trusted host and
 its declared capabilities. They do not make the named Operation Worker tools,
 Run lifecycle or loader available in the thin CLI. Thin execution discovery uses

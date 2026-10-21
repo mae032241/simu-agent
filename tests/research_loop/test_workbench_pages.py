@@ -47,6 +47,40 @@ def test_overview_answers_state_action_usage_and_rounds_for_manager_and_reader(t
     assert files(root) == before
 
 
+def test_overview_and_live_usage_share_weighted_cache_and_latest_exact_context(tmp_path):
+    from scidiscovery.research_loop import contracts as c, ui_saved_status
+    root, key = prepare(tmp_path, enabled=False)
+    finish(root, 1, 'H', [], action='experiment')
+    finish(root, 2, 'A', [1], action='revise_h')
+    for step, input_tokens, cached, output in [(1, 100, 80, 2), (2, 300, 30, 5)]:
+        record = root / 'native-evidence' / f'{step:03d}'
+        c.write(record / 'usage.json', dict(input_tokens=input_tokens, cached_input_tokens=cached, output_tokens=output))
+        c.write(record / 'usage-observation.json', dict(coverage='terminal', context=dict(
+            status='last_reported', total_tokens=25, model_context_window=100)))
+    saved = ui_saved_status.status(root)
+    assert saved['usage']['observed_tokens'] == 407
+    assert saved['usage']['noncached_input_tokens'] == 290
+    assert saved['usage']['cache_hit_ratio'] == .275
+    assert saved['usage']['context']['step'] == 2 and saved['usage']['context']['attempt'] == 0
+    ui, cookie = session(root, key)
+    page = text(ui.get('/', host=ui.host, cookie=cookie)[1])
+    fragments = ui._live_snapshot(ui._browser(cookie), '', force=True)['fragments']
+    for markup in (page, fragments['live-token-monitor']):
+        assert '27.5%' in markup and '25 / 100' in markup
+        assert '阶段 2 / attempt 0' in markup
+        assert '<h2>Token 监控</h2>' in markup
+    for markup in (page, fragments['live-usage']):
+        assert markup.count('<section class="stat') == 4
+        assert all('token-metrics' not in stat for stat in re.findall(r'<section class="stat[^>]*>.*?</section>', markup, re.S))
+    assert 'token-monitor' not in fragments['live-usage']
+    assert page.index('id="live-hero"') < page.index('id="live-usage"') < page.index('id="live-activity"') < page.index('id="live-trail"') < page.index('id="live-token-monitor"') < page.index('class="more-actions"')
+    continuation = root / 'native-evidence/002/continuations/001'
+    c.write(continuation / 'native-intent.json', dict(task_sha256='fixture'))
+    latest = ui_saved_status.status(root)['usage']
+    assert latest['context'] == dict(status='unavailable', step=2, attempt=1)
+    assert latest['observed_tokens'] == 407
+
+
 @pytest.mark.parametrize('state', ['ready', 'budget_exhausted', 'final'])
 def test_budget_adjustment_starts_collapsed_even_when_more_actions_opens(tmp_path, monkeypatch, state):
     root, key = prepare(tmp_path, enabled=False)
@@ -60,7 +94,10 @@ def test_budget_adjustment_starts_collapsed_even_when_more_actions_opens(tmp_pat
     assert budget.startswith('<details class="budget-adjustment"><summary>申请调整预算</summary><div id="budget">')
     assert 'action="/control/budget"' in budget
     assert all('name="' + field + '"' in budget for field in (
-        'max_tokens', 'max_seconds', 'max_steps', 'authorization_note', 'authorization_statement', 'csrf', 'nonce'))
+        'max_tokens', 'max_seconds', 'max_steps', 'authorization_note', 'csrf', 'nonce'))
+    assert budget.count('<textarea') == 1 and 'name="authorization_statement"' not in budget
+    assert '调整说明' in budget and '确认调整预算' in budget
+    assert '提交即确认所填写的新上限；说明随变更记录保存。' in budget
     if state != 'ready':
         assert 'href="#budget"' in page
 
@@ -101,10 +138,11 @@ def test_snapshot_failure_is_specific_and_the_page_still_renders(tmp_path, monke
     monkeypatch.setattr(ui, '_snapshot', broken)
     status, page, _ = ui.get('/', host=ui.host, cookie=cookie)
     page = text(page)
-    assert status == 200 and '状态不可读' in page and 'ValueError' in page and 'is malformed' in page
+    assert status == 200 and '状态不可读' in page and '工作台内部错误' in page and '错误编号' in page
+    assert 'is malformed' not in page
     assert str(root) not in page and '更多操作' in page and 'nav class="top-nav"' in page
     live = ui._live_snapshot(ui._browser(cookie), '')
-    assert 'ValueError' in live['fragments']['live-hero'] and live['current'] is None
+    assert '工作台内部错误' in live['fragments']['live-hero'] and '错误编号' in live['fragments']['live-hero'] and live['current'] is None
 
 
 def test_workspace_list_names_the_failure_instead_of_a_generic_note(tmp_path, monkeypatch):
@@ -118,7 +156,8 @@ def test_workspace_list_names_the_failure_instead_of_a_generic_note(tmp_path, mo
     child = host._child(1)
     monkeypatch.setattr(child, '_summary_snapshot', lambda **options: (_ for _ in ()).throw(OSError('busy record')))
     failed = host._loaded_instances()
-    assert '无法读取此实例：OSError：busy record' in failed and '重试' in failed
+    assert '无法读取此实例：工作台内部错误' in failed and '错误编号' in failed and '重试' in failed
+    assert 'busy record' not in failed
     assert '状态暂不可用' not in failed
 
 
@@ -178,7 +217,8 @@ def test_final_gap_page_keeps_candidates_metrics_sources_and_exact_downloads(tmp
         assert status == 200 and 'Public experiment 1' in page
         table = re.search(r'<section class="candidates.*?</section>', page, re.S).group(0)
         assert 'Public experiment 1' in table and 'Public experiment 2' not in table
-        assert '0.6' in page and 'fixture-public' in page and '无法读取' not in page
+        assert '0.6' in page and 'fixture-public' in page
+        assert '无法读取' not in ''.join(element_texts(page, 'p') + element_texts(page, 'h2'))
         assert 'href="/results/2"' in page and 'href="/nodes/2/materials/1"' in page
         assert '下载推荐候选的研究文件：train.py' in page
     status, body, headers = ui.get('/nodes/2/materials/1', host=ui.host, cookie=cookie)

@@ -186,6 +186,10 @@ def from_document(document, *, base):
                            ('resource_policy', 'execution_resource_policy')):
         if source in executor:
             result[target] = executor[source]
+    if isinstance(result.get('execution_config'), dict) and 'config_file' in result['execution_config']:
+        from scidiscovery.plugin_configuration import configuration_path
+        result['execution_config']['config_file'] = str(configuration_path(
+            result['execution_config']['config_file'], base=base))
     if 'delivery' in document:
         delivery = copy.deepcopy(document['delivery'])
         if isinstance(delivery, dict) and isinstance(delivery.get('adapter'), dict):

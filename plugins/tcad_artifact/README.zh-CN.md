@@ -1,5 +1,7 @@
 # TCAD 执行插件
 
+选择 `tcad_execution:tcad` 时必须显式填写 `config_file`；不接受内联 TCAD 配置，也不自动查找部署默认值。插件文件支持 JSON/TOML 对象，包含 `transport = "command"` 与 `command_config_path`，或 `transport = "socket"` 与 `socket_path`。本地引用按各自配置文件所在目录解析。准备阶段仅本地检查命令/SSH schema、引用文件与可选 `implementation_compilation.capability_snapshot_path`，不联系后端、不创建 adapter 状态。有效配置随实例冻结；修改顶层插件文件不会修改既有实例。
+
 简体中文 | [English](README.md)
 
 薄科研 CLI 加载 `tcad_execution` 执行接口，冻结选定 adapter、传输配置与实现输入，

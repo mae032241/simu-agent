@@ -29,7 +29,8 @@ progress.meter{display:block;width:100%;height:8px;margin:8px 0 0;border:0;borde
 .trail{padding:18px 22px}.trail>h2{margin-bottom:8px;font-size:1.15rem}.round{margin:8px 0;padding:0;border-radius:10px}.round>summary{padding:10px 16px}.round[open]>summary{margin:0;border-bottom:1px solid #e4e9eb}.round-title{font-weight:650}.round-meta{color:#7a8c91;font-size:.8rem;font-weight:450;margin-left:6px}.role-line{padding:12px 18px;border-bottom:1px solid #eef2f3;overflow-wrap:anywhere}.role-line:last-child{border-bottom:0}
 .role-head{margin:0 0 2px;font-size:.86rem;color:#5d7177}.role{display:inline-block;font-weight:700;padding:0 8px;border-radius:6px;background:#eef3f2;color:#203b40}.role-H{background:#efeafa;color:#4b3a7a}.role-W{background:#e3eef8;color:#1d4f7a}.role-A{background:#e1f1e8;color:#14593f}.role-E{background:#f6efe1;color:#6f5216}.one-line{margin:4px 0 6px}
 .facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;margin:6px 0;font-size:.87rem}.facts>div{display:contents}.facts dt{color:#5d7177}.facts dd{margin:0;overflow-wrap:anywhere}.hint{color:#7a8c91}.links{font-size:.84rem;margin:6px 0 0}
-.inline-error{color:#9b2a1e;background:#fdf1ef;border:1px solid #f0c4bd;border-radius:8px;padding:9px 13px;font-size:.9rem;overflow-wrap:anywhere}.empty-note{color:#66797e}
+.token-monitor{padding:24px;border-color:#d3e1dd;box-shadow:0 3px 12px #263c4305}.token-monitor>header{margin-bottom:20px}.token-monitor h2{margin:0 0 4px;font-size:1.15rem;letter-spacing:-.02em}.token-scope{margin:0;color:#6b8081;font-size:.8rem}.token-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0}.token-metrics>div{min-width:0;padding:14px 18px;border-radius:10px;background:#f4f7f7}.token-metrics dt{color:#61777a;font-size:.77rem;line-height:1.65;margin-bottom:7px}.token-metrics dd{margin:0;color:#29484a;font-size:1.45rem;line-height:1.4;font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.token-metrics .token-feature{grid-column:span 2;background:#edf5f1;padding:17px 18px}.token-feature dd{color:#176b5b;font-size:1.5rem}.token-report{display:block;font-size:.74rem;font-weight:400;color:#6b8081;margin-top:6px}.token-metrics .token-note{grid-column:1/-1;display:flex;gap:8px;padding:0;background:transparent}.token-note dt,.token-note dd{margin:0;color:#7b898b;font-size:.73rem;font-weight:400;line-height:1.7}.token-note dt{flex-shrink:0}.token-note .token-report{display:inline;font-size:inherit;margin:0}
+.ui-error{border-left:5px solid #a02b1f;background:#fff8f6;overflow-wrap:anywhere}.ui-error h2{color:#84261d}.ui-error code{white-space:normal}.setup-notice .ui-error{margin:0;border:0;background:transparent;padding:0}.inline-error{color:#9b2a1e;background:#fdf1ef;border:1px solid #f0c4bd;border-radius:8px;padding:9px 13px;font-size:.9rem;overflow-wrap:anywhere}.empty-note{color:#66797e}
 .activity{padding:16px 22px;border-left:5px solid #3b78a8}.activity h2{font-size:1.05rem;margin:0 0 6px}.activity .messages{margin:6px 0 10px;padding-left:20px;font-size:.9rem}.activity .messages li{margin:4px 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .more-actions .action-row{display:flex;flex-wrap:wrap;gap:4px 14px}.more-actions .action-row form{margin:6px 0}.understanding ul{margin:0;padding-left:20px;font-size:.9rem;color:#4d6268}.instance-info{font-size:.88rem}
 .secondary-link{display:inline-block;padding:10px 16px;border:1px solid #cbd8da;border-radius:9px;text-decoration:none;color:#38575d;font-weight:600;background:#fff}
@@ -41,6 +42,8 @@ progress.meter{display:block;width:100%;height:8px;margin:8px 0 0;border:0;borde
 @media(max-width:750px){.mechanism-grid{grid-template-columns:minmax(0,1fr);gap:16px}.mechanism-card{padding:18px}.mechanism-card-head{margin-bottom:16px}.mechanism-card-head h3{font-size:1rem}}
 @media(max-width:900px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.stats{grid-template-columns:1fr}.overview-head{flex-direction:column;align-items:stretch;padding:16px 18px}.head-action{align-items:stretch}.head-action .primary,.head-action button{width:100%;text-align:center}.facts{grid-template-columns:1fr}.facts dd{margin-bottom:4px}.role-line{padding:10px 12px}.round>summary{padding:10px 12px}.trail{padding:14px}.material-steps{columns:1}.top-nav{gap:4px 16px}}
+.token-metrics dd.token-unavailable{font-size:.9rem;color:#7b898b;font-weight:450}
+@media(max-width:560px){.token-monitor{padding:18px}.token-monitor>header{margin-bottom:16px}.token-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.token-metrics>div{padding:12px 14px}.token-metrics dd{font-size:1.3rem}.token-metrics .token-feature{grid-column:1/-1;padding:14px}.token-feature dd{font-size:1.4rem}.token-metrics .token-note{gap:7px}.token-note dd{font-size:.73rem}.token-metrics dd.token-unavailable{font-size:.9rem}}
 '''
 
 PROGRESS_SCRIPT = """
@@ -48,6 +51,30 @@ const connection = document.querySelector('[data-live-url]');
 const panel = document.querySelector('[data-progress]');
 let timer, generation = 0, cursor = panel?.dataset.cursor || '', progressURL = panel?.dataset.progress || '';
 let rows = panel ? JSON.parse(panel.querySelector('[data-raw-events]').textContent) : [];
+let source, sessionCheck = false, authorizationLost = false;
+async function responseProblem(response, fallback) {
+  let value;
+  try { value = await response.json(); } catch (_) {}
+  const problem = value?.error;
+  return problem && typeof problem === 'object' ? [problem.title, problem.cause, problem.hint,
+    problem.field ? '相关字段：' + problem.field : '', problem.reference ? '错误编号：' + problem.reference : ''].filter(Boolean).join(' · ') : fallback;
+}
+function stopForAuthorization(message) {
+  authorizationLost = true; generation++; window.clearTimeout(timer); source?.close(); source = null;
+  if (connection) { connection.textContent = message; connection.dataset.state = 'expired'; }
+  if (panel) panel.querySelector('[data-stream-status]').textContent = message;
+}
+async function checkSession() {
+  if (!connection || sessionCheck || authorizationLost) return;
+  sessionCheck = true;
+  try {
+    const response = await fetch(connection.dataset.liveUrl.slice(0, -4) + 'session', {cache:'no-store', credentials:'same-origin'});
+    if (response.status === 403) stopForAuthorization(await responseProblem(response,
+      '浏览会话已失效，请回到启动终端，使用本次 management_url 重新打开；已显示内容和已填输入保留。'));
+    else if (!response.ok) connection.textContent = await responseProblem(response, '工作台状态读取失败，请检查工作台。');
+  } catch (_) { /* A network interruption retains the ordinary read-only reconnect. */ }
+  finally { sessionCheck = false; }
+}
 function append(item) {
   const row = document.createElement('article'); row.className = 'event';
   const text = document.createElement('p');
@@ -63,40 +90,69 @@ function append(item) {
   const events = panel.querySelector('[data-events]'); events.appendChild(row);
   while (events.children.length > 200) events.removeChild(events.firstChild);
 }
+function tokenDetails(details) {
+  const slot = document.querySelector('[data-token-monitor] [data-token-details]');
+  if (!slot) return;
+  const list = document.createElement('dl'); list.className = 'token-metrics';
+  for (const item of details || []) {
+    const row = document.createElement('div'), label = document.createElement('dt'), value = document.createElement('dd');
+    row.className = ['计量状态','观测限制'].includes(item.label) ? 'token-note' : (item.label === '缓存命中率' || item.label.startsWith('最近一次上报上下文') ? 'token-feature' : 'token-count');
+    label.textContent = item.label;
+    if (item.value.startsWith('不可用')) value.className = 'token-unavailable';
+    const separator = row.className === 'token-note' ? -1 : item.value.indexOf('；');
+    value.textContent = separator < 0 ? item.value : item.value.slice(0, separator);
+    if (separator >= 0) { const report = document.createElement('span'); report.className = 'token-report'; report.textContent = item.value.slice(separator + 1); value.appendChild(report); }
+    row.append(label, value); list.appendChild(row);
+  }
+  slot.replaceChildren(list);
+}
 async function poll(selectedGeneration) {
-  if (!progressURL || selectedGeneration !== generation) return;
+  if (!progressURL || selectedGeneration !== generation || authorizationLost) return;
   const status = panel.querySelector('[data-stream-status]');
   try {
     const response = await fetch(progressURL + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), {cache:'no-store'});
     if (selectedGeneration !== generation) return;
-    if (!response.ok) throw new Error('公开进度暂不可用');
+    if (!response.ok) {
+      const message = await responseProblem(response, response.status === 403
+        ? '浏览会话已失效，请从终端本次 management_url 重新打开工作台。' : '公开进度读取失败，请重新打开此阶段页面。');
+      if (selectedGeneration !== generation) return;
+      if (response.status === 403) { stopForAuthorization(message); return; }
+      status.textContent = message;
+      if (response.status >= 400 && response.status < 500) return;
+      const error = new Error(message); error.publicProblem = true; throw error;
+    }
     const value = await response.json();
     if (selectedGeneration !== generation) return;
     status.textContent = value.progress_label;
+    tokenDetails(value.token_details);
     for (const item of value.events) { rows.push(item); append(item); }
     if (rows.length > 200) rows.splice(0, rows.length - 200);
     panel.querySelector('[data-raw-events]').textContent = JSON.stringify(rows, null, 2);
     if (value.restart_required) { status.textContent += '；请重新打开此进度页以读取新来源'; return; }
     cursor = value.cursor || cursor;
-  } catch (_) { if (selectedGeneration === generation) status.textContent = '进度连接暂不可用，正在重连'; }
+  } catch (error) { if (selectedGeneration === generation) status.textContent = (error.publicProblem ? error.message : '进度连接暂不可用') + '；正在重新连接，已显示内容保留'; }
   if (selectedGeneration === generation) timer = window.setTimeout(() => poll(selectedGeneration), 2000);
 }
 function follow(current) {
-  if (!panel?.dataset.followLatest) return;
+  if (!panel?.dataset.followLatest || authorizationLost) return;
   const next = current?.url || '';
   if (next === progressURL) {
-    if (!current) panel.querySelector('[data-stream-status]').textContent = '尚无研究阶段；状态会自动更新';
+    if (!current) {
+      panel.querySelector('[data-stream-status]').textContent = '尚无研究阶段；状态会自动更新';
+      document.querySelector('[data-token-monitor] [data-token-scope]').textContent = '当前阶段 · 等待助手用量';
+    }
     return;
   }
   generation++; window.clearTimeout(timer); progressURL = next; cursor = ''; rows = [];
   panel.querySelector('[data-events]').replaceChildren();
   panel.querySelector('[data-raw-events]').textContent = '[]';
+  tokenDetails([]);
+  document.querySelector('[data-token-monitor] [data-token-scope]').textContent = current ? '第 ' + current.step + ' 阶段 · attempt ' + current.attempt + ' · 本次助手用量' : '当前阶段 · 等待助手用量';
   panel.querySelector('[data-progress-heading]').textContent = current ? '第 ' + current.step + ' 阶段 · ' + current.role + ' · 公开工作' : '当前助手的公开工作';
   panel.querySelector('[data-stream-status]').textContent = current ? '正在读取当前阶段状态…' : '尚无研究阶段；状态会自动更新';
   poll(generation);
 }
 if (panel && !panel.dataset.followLatest) poll(generation);
-let source;
 const rendered = new Map();
 // Editable forms outside these slots are never replaced. A correction-note
 // form inside a live action slot also keeps its user's draft.
@@ -106,9 +162,10 @@ document.addEventListener('input', event => {
   if (slot && form) form.dataset.liveDraft = 'true';
 });
 function connect() {
-  if (!connection || source) return;
+  if (!connection || source || authorizationLost) return;
   source = new EventSource(connection.dataset.liveUrl);
   source.addEventListener('snapshot', event => {
+    if (authorizationLost) return;
     try {
       const value = JSON.parse(event.data);
       for (const [id, markup] of Object.entries(value.fragments)) {
@@ -154,8 +211,8 @@ function connect() {
       connection.textContent = '已连接 · 状态自动同步'; connection.dataset.state = 'connected';
     } catch (_) { connection.textContent = '状态暂不可用，正在重连'; connection.dataset.state = 'offline'; }
   });
-  source.addEventListener('unavailable', () => { connection.textContent = '状态暂不可用，正在自动重连'; connection.dataset.state = 'offline'; });
-  source.onerror = () => { connection.textContent = '连接中断，正在自动重连；已填写内容保留'; connection.dataset.state = 'offline'; };
+  source.addEventListener('unavailable', () => { connection.textContent = '状态暂不可用，正在自动重连'; connection.dataset.state = 'offline'; checkSession(); });
+  source.onerror = () => { connection.textContent = '连接中断，正在自动重连；已填写内容保留'; connection.dataset.state = 'offline'; checkSession(); };
 }
 connect();
 window.addEventListener('pagehide', () => { source?.close(); source = null; generation++; window.clearTimeout(timer); });

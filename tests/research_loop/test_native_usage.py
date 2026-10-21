@@ -167,3 +167,97 @@ def test_discovery_handles_nested_native_date_directories_and_ignores_symlinks(t
     reader = SessionUsage(home, work)
     reader.bind_thread(THREAD)
     assert reader.poll()['tokens']['input_tokens'] == 100
+
+
+def context_counter(input_tokens=100, used=60, window=100, **extra):
+    value = json.loads(counter(input_tokens=input_tokens))
+    value['timestamp'] = '2026-10-21T00:00:00Z'
+    value['payload']['info'].update(last_token_usage=dict(total_tokens=used), model_context_window=window, **extra)
+    return json.dumps(value).encode() + b'\n'
+
+
+def test_context_is_last_reported_not_cumulative_and_compaction_can_decrease(tmp_path):
+    home, work, path = session(tmp_path, context_counter(private_text='hidden-conversation'))
+    reader = SessionUsage(home, work)
+    reader.bind_thread(THREAD)
+    first = reader.poll()
+    assert first['context']['ratio'] == .6
+    assert first['context']['total_tokens'] == 60
+    assert first['context']['reported_at'] == 1792540800
+    assert 'hidden-conversation' not in json.dumps(first)
+    assert reader.poll() == first  # No new event means no invented freshness.
+    with path.open('ab') as stream:
+        stream.write(context_counter(input_tokens=200, used=20))
+    compacted = reader.poll()
+    assert compacted['tokens']['input_tokens'] == 200
+    assert compacted['context']['ratio'] == .2
+    assert compacted['coverage'] == 'live'
+    path.unlink()
+    assert reader.poll()['context'] == dict(status='unavailable')
+
+
+@pytest.mark.parametrize('used,window', [(True, 100), (10, 0), (-1, 100), (2 ** 53, 100), (10, 'private-window'), (None, 100)])
+def test_malformed_optional_context_does_not_corrupt_billing(tmp_path, used, window):
+    home, work, _ = session(tmp_path, context_counter(used=used, window=window))
+    reader = SessionUsage(home, work)
+    reader.bind_thread(THREAD)
+    observation = reader.poll()
+    assert observation['tokens'] == dict(input_tokens=100, cached_input_tokens=80, output_tokens=5)
+    assert observation['coverage'] == 'live'
+    assert observation['context'] == dict(status='unavailable')
+
+
+def test_resume_context_never_inherits_parent_baseline_or_subtracts_window_usage(tmp_path):
+    home, work, path = session(tmp_path, context_counter())
+    reader = SessionUsage(home, work, session=dict(path=str(path), thread_id=THREAD))
+    assert reader.poll()['context'] == dict(status='unavailable')
+    with path.open('ab') as stream:
+        stream.write(context_counter(input_tokens=150, used=30))
+    observation = reader.poll()
+    assert observation['tokens']['input_tokens'] == 50
+    assert observation['context']['total_tokens'] == 30
+    assert observation['context']['ratio'] == .3
+    with path.open('ab') as stream:
+        stream.write(counter(input_tokens=200))
+    assert reader.poll()['context'] == dict(status='unavailable')
+
+
+def test_discovery_continues_bounded_sweep_and_never_scans_after_binding(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import native_usage
+    home, work, path = session(tmp_path, counter())
+    for index in range(20):
+        (path.parent / f'unrelated-{index}').touch()
+    monkeypatch.setattr(native_usage, 'DISCOVERY_ENTRIES', 4)
+    reader = SessionUsage(home, work)
+    reader.bind_thread(THREAD)
+    assert reader.poll()['reason'] == 'session_discovery_capacity'
+    for _ in range(8):
+        observation = reader.poll()
+        if observation['coverage'] == 'live':
+            break
+    assert observation['tokens']['input_tokens'] == 100
+    assert reader.path == path
+    monkeypatch.setattr(native_usage.os, 'scandir', lambda *args: pytest.fail('Bound session must not rediscover'))
+    assert reader.poll()['tokens']['input_tokens'] == 100
+
+
+def test_discovery_rejects_duplicate_threads_across_batches_and_retries_absent_sweeps(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import native_usage
+    home, work, path = session(tmp_path, counter())
+    original = path.read_bytes()
+    path.unlink()
+    monkeypatch.setattr(native_usage, 'DISCOVERY_ENTRIES', 1)
+    reader = SessionUsage(home, work)
+    reader.bind_thread(THREAD)
+    assert reader.poll()['reason'] == 'session_unavailable'
+    path.write_bytes(original)
+    nested = path.parent / 'other'
+    nested.mkdir()
+    (nested / path.name).write_bytes(original)
+    for _ in range(12):
+        observation = reader.poll()
+        if observation['reason'] == 'session_ambiguous':
+            break
+    assert observation['reason'] == 'session_ambiguous'
+    assert reader.path is None and not observation['has_observation']
+    assert reader.discovery_entries is None

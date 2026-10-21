@@ -739,7 +739,15 @@ def read_transport_config(path: Path) -> SSHTCADTransportConfig:
             raise ValueError("SSH transport configuration must be a regular file")
         if stat.S_IMODE(metadata.st_mode) & 0o022:
             raise ValueError("SSH transport configuration must not be group/world writable")
-        return SSHTCADTransportConfig.model_validate_json(path.read_bytes(), strict=True)
+        from scidiscovery.plugin_configuration import read_configuration
+        body = read_configuration(path)
+        for field in ('ssh_executable', 'identity_file', 'known_hosts_file'):
+            if isinstance(body.get(field), str):
+                body[field] = str((path.absolute().parent / Path(body[field]).expanduser()).resolve())
+        resolver = body.get('destination_resolver')
+        if isinstance(resolver, list) and resolver and isinstance(resolver[0], str):
+            resolver[0] = str((path.absolute().parent / Path(resolver[0]).expanduser()).resolve())
+        return SSHTCADTransportConfig.model_validate_json(json.dumps(body), strict=True)
     except (OSError, ValueError) as error:
         raise SSHTransportConfigurationError("TCAD SSH transport configuration is invalid") from error
 

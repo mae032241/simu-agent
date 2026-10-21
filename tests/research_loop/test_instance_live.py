@@ -35,7 +35,9 @@ def test_http_sse_initial_change_reconnect_and_exact_read_scope(tmp_path):
     with host(root, key, workspace=False) as (connection, url, endpoint):
         cookie = login(connection, url)
         assert request(connection, 'GET', '/live')[0] == 403
-        assert request(connection, 'GET', '/live?token=forbidden', cookie=cookie)[0] == 403
+        denied = request(connection, 'GET', '/live?token=forbidden', cookie=cookie)
+        assert denied[0] == 400 and b'event: snapshot' not in denied[1]
+        assert not denied[2].get('Content-Type', '').startswith('text/event-stream')
         following = request(connection, 'GET', '/progress', cookie=cookie)
         assert following[0] == 200 and b'data-follow-latest="true"' in following[1]
         client, response = stream(url, '/live', cookie)
@@ -49,6 +51,8 @@ def test_http_sse_initial_change_reconnect_and_exact_read_scope(tmp_path):
             assert changed['current']['url'] == '/nodes/1/events?attempt=0'
             assert 'First retained finding' in changed['fragments']['live-trail']
             assert '<strong>10</strong><span class="stat-limit"> / 4,000</span>' in changed['fragments']['live-usage']
+            assert 'Token 监控' in changed['fragments']['live-token-monitor']
+            assert 'token-monitor' not in changed['fragments']['live-usage']
         finally:
             response.close(); client.close()
         finish(root, 2, 'A', [1], summary='Needs a missing measurement')
@@ -111,6 +115,11 @@ def test_workspace_loaded_state_and_mounted_stream(tmp_path):
         fixed = request(connection, 'GET', '/instances/1/nodes/1/progress', cookie=child_cookie)[1]
         assert b'data-progress="/instances/1/nodes/1/events?attempt=0"' in fixed
         assert b'data-follow-latest="true"' not in fixed
+        for markup in (page, fixed):
+            assert b'<section class="token-monitor" data-token-monitor>' in markup
+            assert markup.index(b'<section data-progress=') < markup.index(b'<section class="token-monitor"')
+            public_log = markup.split(b'<section data-progress=', 1)[1].split(b'</section>', 1)[0]
+            assert b'data-token-details' not in public_log
 
 
 def test_shared_snapshot_cache_reuses_briefly_then_reads_saved_state_without_tree_scan(tmp_path, monkeypatch):

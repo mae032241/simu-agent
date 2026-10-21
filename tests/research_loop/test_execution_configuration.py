@@ -11,6 +11,7 @@ import pytest
 from scidiscovery.research_loop import contracts as c, controller, execution, experiments as e, native
 from scidiscovery.operations.execution import ExecutionInterfaceRegistration
 from scidiscovery.operations.runtime_plugins import RuntimePluginFactory
+from scidiscovery.plugin_configuration import PluginConfigurationError, read_execution_selection
 from execution_fixtures import execution_registry, remote_registry
 from test_composed_execution_results import composed_registry
 
@@ -114,6 +115,55 @@ def forbidden_factory(context):
     raise AssertionError('prepare must not construct an adapter or fabricate host scope')
 
 
+@pytest.mark.parametrize('extension,body', [('json', '{"setting":7}'), ('toml', 'setting = 7\n')])
+def test_generic_plugin_file_loading_and_frozen_validation(tmp_path, monkeypatch, extension, body):
+    calls = []
+    def configure(config, source, *, binding):
+        assert binding == 'binding'
+        calls.append((config, source))
+        return dict(config, nested_path=str(source.parent / 'nested.json'))
+    declared = ExecutionInterfaceRegistration('third_party', '1', RuntimePluginFactory(
+        forbidden_factory, configure=configure, requires_config_file=True))
+    monkeypatch.setattr(e, 'registration', lambda executor: (declared, 'binding'))
+    directory = tmp_path / 'selection'; directory.mkdir()
+    plugin = directory / ('plugin.' + extension); plugin.write_text(body)
+    wrapper = directory / ('execution.' + extension)
+    wrapper.write_text(json.dumps(dict(executor='third_party:binding', config_file=plugin.name))
+        if extension == 'json' else f'executor = "third_party:binding"\nconfig_file = "{plugin.name}"\n')
+    monkeypatch.chdir(tmp_path.parent)
+    frozen = e.operator_configuration(read_execution_selection(wrapper))
+    assert frozen == dict(executor='third_party:binding', configuration=dict(
+        setting=7, nested_path=str(directory / 'nested.json')))
+    assert calls == [({'setting': 7}, plugin)]
+    plugin.unlink(); wrapper.unlink()
+    assert e.validate_operator_configuration(frozen) == frozen
+    assert len(calls) == 1
+    with pytest.raises(PluginConfigurationError) as caught:
+        e.operator_configuration(dict(executor='third_party:binding', configuration={}))
+    assert caught.value.code == 'plugin_config_file_required'
+
+
+@pytest.mark.parametrize('problem', ['missing', 'invalid', 'directory', 'oversize', 'ambiguous'])
+def test_plugin_file_failures_precede_instance_mutation(tmp_path, monkeypatch, problem):
+    declared = ExecutionInterfaceRegistration('third_party', '1', RuntimePluginFactory(
+        forbidden_factory, configure=lambda *_, **__: pytest.fail('invalid file reached plugin'), requires_config_file=True))
+    monkeypatch.setattr(e, 'registration', lambda executor: (declared, 'binding'))
+    source = tmp_path / 'private-config.json'
+    selection = dict(executor='third_party:binding', config_file=str(source))
+    if problem == 'invalid': source.write_text('{"credential":"sensitive-value",')
+    elif problem == 'directory': source.mkdir()
+    elif problem == 'oversize': source.write_text(' ' * 256001)
+    elif problem == 'ambiguous': selection['configuration'] = {}
+    public, goal = inputs(tmp_path)
+    with pytest.raises(PluginConfigurationError) as caught:
+        controller.prepare(tmp_path/'instance', goal, public, ['never-launched'],
+            max_tokens=100, max_seconds=10, max_steps=2, model='fixture', reasoning_effort='high', execution_config=selection)
+    assert not (tmp_path / 'instance').exists()
+    assert caught.value.field_path in {'executor.config.config_file', 'executor.config.executor'}
+    assert str(tmp_path) not in str(caught.value) + caught.value.hint
+    assert 'sensitive-value' not in str(caught.value) + caught.value.hint
+
+
 def frozen_fixture(tmp_path,executor,options):
     selected=e.operator_configuration(dict(executor=executor,configuration=options))
     path=tmp_path/'experiment-config.json'
@@ -169,6 +219,33 @@ def test_operator_configuration_rejects_host_identity_and_permissions(execution_
         e.operator_configuration(dict(executor='local_execution:command',configuration={field:{}}))
 
 
+def test_trusted_cov_launcher_configuration_preserves_exact_host_bindings(tmp_path, execution_registry):
+    from scidiscovery.research_loop import cov_lineage, experiment_client, profiles
+    from scidiscovery.research_loop.protocol import stage_scope
+    from test_history_handoff import finish
+    public, goal = inputs(tmp_path)
+    root = tmp_path / 'instance'
+    settings = controller.prepare(root, goal, public, ['custom'], max_tokens=1000,
+        max_seconds=60, max_steps=4, model='no-model', reasoning_effort='high', search_policy=None)
+    assert settings.get('execution_config') is None
+    finish(root, 1, 'H', [], action='experiment')
+    job = c.build_job(root, 2, 'W', [1])
+    record = execution.origin(root, 2)
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/002.json'),
+        **profiles.binding(settings, job)))
+    output = tmp_path / 'cov-config.json'
+    result = cov_lineage.configure(root, 2, [sys.executable], root / 'runs', output,
+        receipt_channel='backend_file')
+    assert result['status'] == 'configured'
+    config, _ = cov_lineage._config(output)
+    assert config['scope'] == stage_scope(root, job)
+    assert config['record_dir'] == str(experiment_client.record_directory(root, 2))
+    assert config['native_attempt'] == dict(number=0, execution_key=execution.identity(root, 2))
+    assert config['admission']['mode'] == 'soft'
+    assert config['execution_interface']['executor'] == 'cov_execution:experiment'
+    assert c.read(record / 'experiment-config.json') == config
+
+
 @pytest.mark.process_e2e
 def test_cli_rejects_operator_host_field_injection_before_creating_instance(tmp_path,execution_registry):
     public,goal=inputs(tmp_path);path=tmp_path/'config.json';c.write(path,dict(executor='local_execution:command',configuration={'admission':{}}))
@@ -204,8 +281,10 @@ def test_duplicate_registration_is_not_cached_or_chosen(monkeypatch,execution_re
         def select(self,**kwargs):
             matches=list(original().select(**kwargs));return matches+matches
     monkeypatch.setattr(importlib.metadata,'entry_points',lambda:Duplicate())
-    with pytest.raises(e.UnsupportedExecution,match='unavailable'):
+    with pytest.raises(PluginConfigurationError) as caught:
         e.operator_configuration(dict(executor='local_execution:command',configuration={}))
+    assert caught.value.code == 'plugin_executor_unavailable'
+    assert caught.value.field_path == 'executor.config.executor'
 
 
 @pytest.mark.parametrize('change',['modify','add','delete','symlink'])
